@@ -1,0 +1,45 @@
+# ---- Build output ----
+/build/
+build*/
+*.o
+*.obj
+*.a
+*.exe
+*.dll
+*.pdb
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeLists.txt.user*
+
+# ---- Qt / IDE ----
+*.user
+*.autosave
+.qtcreator/
+.vscode/
+.idea/
+*.qmlc
+*.jsc
+
+# ---- Local agent / editor state ----
+.claude/
+
+# ---- CipSoft client assets (copyrighted - MUST NOT be redistributed) ----
+# Provide your own client files locally; they are never committed.
+Tibia.spr
+Tibia.dat
+Tibia.otfi
+*.spr
+*.dat
+items.otb
+
+# ---- Local test maps / scratch data ----
+*.otbm
+*-house.xml
+*-spawn.xml
+
+# ---- OS junk ----
+Thumbs.db
+.DS_Store

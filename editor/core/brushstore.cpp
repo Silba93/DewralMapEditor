@@ -1,0 +1,596 @@
+#include "brushstore.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <algorithm>
+#include <random>
+
+// Tablica RME GroundBrush::border_types[256] (bitmaska 8 sasiadow -> do 4 kierunkow
+// spakowanych po 8 bitow). Wygenerowana 1:1 z brush_tables.cpp::GroundBrush::init().
+static const quint32 kBorderTypes[256] = {
+0u,5u,1u,1u,6u,1541u,1u,1u,
+4u,4u,9u,9u,1540u,1540u,9u,9u,
+2u,517u,10u,10u,2u,517u,10u,10u,
+516u,516u,132097u,132097u,1026u,1026u,262657u,262657u,
+7u,1287u,263u,263u,1543u,329223u,263u,263u,
+4u,4u,9u,9u,1540u,1540u,9u,9u,
+519u,328199u,2567u,2567u,519u,328199u,2567u,2567u,
+516u,516u,66052u,66052u,516u,516u,66052u,66052u,
+3u,1283u,259u,259u,1539u,329219u,259u,259u,
+12u,12u,262403u,262403u,1548u,1548u,262403u,262403u,
+11u,1291u,131331u,131331u,11u,1291u,131331u,131331u,
+132099u,132099u,16909315u,16909315u,132099u,132099u,16909315u,16909315u,
+3u,1283u,259u,259u,1539u,394499u,259u,259u,
+12u,12u,66563u,66563u,1548u,1548u,66563u,66563u,
+11u,1291u,66051u,66051u,11u,1291u,66051u,66051u,
+262659u,262659u,67174915u,67174915u,262659u,262659u,67174915u,67174915u,
+8u,2053u,2049u,2049u,2054u,525574u,2049u,2049u,
+2052u,2052u,2057u,2057u,525828u,525828u,2057u,2057u,
+2u,1282u,10u,10u,2u,1282u,10u,10u,
+1026u,1026u,262657u,66562u,1026u,1026u,262657u,262657u,
+2055u,525575u,524551u,524551u,525831u,134546951u,524551u,524551u,
+2052u,2052u,2057u,2057u,525828u,525828u,2057u,2057u,
+519u,328199u,2567u,2567u,519u,328199u,2567u,2567u,
+516u,516u,66052u,66052u,516u,516u,66052u,66052u,
+3u,1283u,259u,259u,1539u,329219u,259u,259u,
+12u,12u,262403u,262403u,1548u,1548u,262403u,262403u,
+11u,1291u,131331u,131331u,11u,1291u,131331u,131331u,
+132099u,132099u,16909315u,16909315u,132099u,132099u,16909315u,16909315u,
+3u,1283u,259u,259u,1539u,394499u,259u,259u,
+12u,12u,66563u,66563u,1548u,1548u,66563u,66563u,
+11u,1291u,66051u,66051u,11u,1291u,66051u,66051u,
+262659u,262659u,67174915u,67174915u,262659u,262659u,67174915u,67174915u,
+};
+
+// BorderType (indeksy w tablicy 13 kafli bordera) - jak enum RME BorderType.
+enum {
+    BT_NONE = 0, BT_N = 1, BT_E = 2, BT_S = 3, BT_W = 4,
+    BT_CNW = 5, BT_CNE = 6, BT_CSW = 7, BT_CSE = 8,
+    BT_DNW = 9, BT_DNE = 10, BT_DSE = 11, BT_DSW = 12,
+};
+
+BrushStore::BrushStore(QObject *parent)
+    : QObject(parent)
+{
+}
+
+void BrushStore::clear()
+{
+    m_borders.clear();
+    m_grounds.clear();
+    m_groundByServerId.clear();
+    m_borderItemIds.clear();
+    m_walls.clear();
+    m_wallByServerId.clear();
+    m_doodads.clear();
+    m_doodadByServerId.clear();
+}
+
+const std::array<int, 13> *BrushStore::borderTiles(const QString &key) const
+{
+    auto it = m_borders.find(key);
+    return it == m_borders.end() ? nullptr : &(*it);
+}
+
+const BrushStore::GroundDef *BrushStore::groundDef(const QString &name) const
+{
+    if (name.isEmpty()) return nullptr;
+    auto it = m_grounds.find(name);
+    return it == m_grounds.end() ? nullptr : &(*it);
+}
+
+bool BrushStore::loadForVersion(int clientVersion)
+{
+    clear();
+    const QString path = QDir(QCoreApplication::applicationDirPath())
+                             .filePath(QStringLiteral("data/%1/brushes.json").arg(clientVersion));
+    if (!QFile::exists(path)) return false;
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    if (!doc.isObject()) return false;
+    const QJsonObject root = doc.object();
+
+    // --- borders ---
+    const QJsonObject borders = root.value(QStringLiteral("borders")).toObject();
+    for (auto it = borders.begin(); it != borders.end(); ++it) {
+        const QJsonArray arr = it.value().toArray();
+        std::array<int, 13> tiles{};
+        for (int i = 0; i < 13 && i < arr.size(); ++i) {
+            tiles[i] = arr.at(i).toInt();
+            if (i > 0 && tiles[i] > 0) m_borderItemIds.insert(tiles[i]);
+        }
+        m_borders.insert(it.key(), tiles);
+    }
+
+    // --- grounds ---
+    const QJsonObject grounds = root.value(QStringLiteral("grounds")).toObject();
+    for (auto it = grounds.begin(); it != grounds.end(); ++it) {
+        const QJsonObject g = it.value().toObject();
+        GroundDef def;
+        def.zorder = g.value(QStringLiteral("zorder")).toInt();
+        def.lookid = g.value(QStringLiteral("lookid")).toInt();
+        def.hateFriends = g.value(QStringLiteral("hate_friends")).toBool();
+        def.optional = g.value(QStringLiteral("optional")).toString();
+
+        const QJsonArray items = g.value(QStringLiteral("items")).toArray();
+        for (const QJsonValue &v : items) {
+            const QJsonArray pair = v.toArray();
+            if (pair.size() < 2) continue;
+            const int id = pair.at(0).toInt();
+            const int chance = pair.at(1).toInt();
+            def.totalChance += chance;
+            def.items.append({id, def.totalChance});   // skumulowana szansa
+            if (id > 0) m_groundByServerId.insert(id, it.key());
+        }
+
+        const QJsonArray bbs = g.value(QStringLiteral("borders")).toArray();
+        for (const QJsonValue &v : bbs) {
+            const QJsonObject o = v.toObject();
+            BorderBlock bb;
+            bb.outer = o.value(QStringLiteral("align")).toString() != QStringLiteral("inner");
+            bb.to = o.value(QStringLiteral("to")).toString();
+            bb.borderKey = o.value(QStringLiteral("border")).toString();
+            def.borders.append(bb);
+            const bool zilch = bb.to.isEmpty();
+            if (bb.outer) { if (zilch) def.hasZilchOuter = true; else def.hasOuter = true; }
+            else          { if (zilch) def.hasZilchInner = true; else def.hasInner = true; }
+        }
+
+        const QJsonArray friends = g.value(QStringLiteral("friends")).toArray();
+        for (const QJsonValue &v : friends) {
+            const QString fn = v.toString();
+            if (fn == QStringLiteral("*")) def.friendsAll = true;
+            else def.friends.insert(fn);
+        }
+
+        m_grounds.insert(it.key(), def);
+    }
+
+    // --- walls (RME WallBrush) ---
+    const QJsonObject walls = root.value(QStringLiteral("walls")).toObject();
+    for (auto it = walls.begin(); it != walls.end(); ++it) {
+        const QJsonObject w = it.value().toObject();
+        WallDef def;
+        def.lookid = w.value(QStringLiteral("lookid")).toInt();
+        const QJsonObject items = w.value(QStringLiteral("items")).toObject();
+        for (auto ai = items.begin(); ai != items.end(); ++ai) {
+            const int align = ai.key().toInt();
+            if (align < 0 || align >= 17) continue;
+            WallDef::Node &node = def.align[align];
+            const QJsonArray arr = ai.value().toArray();
+            for (const QJsonValue &v : arr) {
+                const QJsonArray pair = v.toArray();
+                if (pair.size() < 2) continue;
+                const int id = pair.at(0).toInt();
+                const int chance = pair.at(1).toInt();
+                if (id <= 0) continue;
+                node.total += chance;               // skumulowana szansa (jak RME WallNode)
+                node.items.append({ id, node.total });
+                m_wallByServerId.insert(id, it.key());
+            }
+        }
+        m_walls.insert(it.key(), def);
+    }
+
+    // --- doodads (RME DoodadBrush) ---
+    const QJsonObject doodads = root.value(QStringLiteral("doodads")).toObject();
+    for (auto it = doodads.begin(); it != doodads.end(); ++it) {
+        const QJsonObject d = it.value().toObject();
+        DoodadDef def;
+        def.lookid = d.value(QStringLiteral("lookid")).toInt();
+        if (def.lookid > 0) m_doodadByServerId.insert(def.lookid, it.key());
+
+        const QJsonArray alts = d.value(QStringLiteral("alternates")).toArray();
+        for (const QJsonValue &av : alts) {
+            const QJsonObject ao = av.toObject();
+            DoodadDef::Alt alt;
+
+            for (const QJsonValue &sv : ao.value(QStringLiteral("singles")).toArray()) {
+                const QJsonArray pair = sv.toArray();
+                if (pair.size() < 2) continue;
+                const int id = pair.at(0).toInt();
+                const int chance = pair.at(1).toInt();
+                if (id <= 0 || chance <= 0) continue;
+                alt.singles.append({ id, chance });
+                alt.singleTotal += chance;
+            }
+
+            for (const QJsonValue &cv : ao.value(QStringLiteral("composites")).toArray()) {
+                const QJsonObject co = cv.toObject();
+                DoodadDef::Composite comp;
+                comp.chance = co.value(QStringLiteral("chance")).toInt();
+                if (comp.chance <= 0) continue;
+                for (const QJsonValue &tv : co.value(QStringLiteral("tiles")).toArray()) {
+                    const QJsonObject to = tv.toObject();
+                    DoodadTile dt;
+                    dt.dx = to.value(QStringLiteral("dx")).toInt();
+                    dt.dy = to.value(QStringLiteral("dy")).toInt();
+                    dt.dz = to.value(QStringLiteral("dz")).toInt();   // offset pietra
+                    for (const QJsonValue &iv : to.value(QStringLiteral("items")).toArray()) {
+                        const int id = iv.toInt();
+                        if (id > 0) dt.items.append(id);
+                    }
+                    if (!dt.items.isEmpty()) comp.tiles.append(dt);
+                }
+                if (comp.tiles.isEmpty()) continue;
+                alt.composites.append(comp);
+                alt.compositeTotal += comp.chance;
+            }
+
+            if (alt.singles.isEmpty() && alt.composites.isEmpty()) continue;
+            def.alts.append(alt);
+        }
+        if (!def.alts.isEmpty()) m_doodads.insert(it.key(), def);
+    }
+
+    return !m_grounds.isEmpty() || !m_walls.isEmpty() || !m_doodads.isEmpty();
+}
+
+const BrushStore::DoodadDef *BrushStore::doodadDef(const QString &name) const
+{
+    if (name.isEmpty()) return nullptr;
+    auto it = m_doodads.constFind(name);
+    return it == m_doodads.constEnd() ? nullptr : &it.value();
+}
+
+QVector<BrushStore::DoodadTile> BrushStore::doodadPreviewTiles(const QString &name) const
+{
+    const DoodadDef *def = doodadDef(name);
+    if (!def) return {};
+    // Pierwszy composite z pierwszego wariantu, ktory go ma - stabilna ikona.
+    for (const DoodadDef::Alt &alt : def->alts)
+        if (!alt.composites.isEmpty())
+            return alt.composites.front().tiles;
+    // Doodad z samych singli - pierwszy single jako pojedynczy kafel (do ghost/podgladu).
+    for (const DoodadDef::Alt &alt : def->alts)
+        if (!alt.singles.isEmpty())
+            return { DoodadTile{ 0, 0, 0, { alt.singles.front().first } } };
+    return {};
+}
+
+int BrushStore::doodadVariantCount(const QString &name) const
+{
+    const DoodadDef *def = doodadDef(name);
+    if (!def) return 0;
+    int n = 0;
+    for (const DoodadDef::Alt &alt : def->alts)
+        n += alt.singles.size() + alt.composites.size();
+    return n;
+}
+
+QVector<BrushStore::DoodadTile> BrushStore::doodadVariantTiles(const QString &name, int index) const
+{
+    const DoodadDef *def = doodadDef(name);
+    if (!def) return {};
+    const int total = doodadVariantCount(name);
+    if (total <= 0) return {};
+    index = ((index % total) + total) % total;   // zawijanie
+
+    // Plaska numeracja: najpierw singles, potem composites - w kolejnosci alts.
+    int i = 0;
+    for (const DoodadDef::Alt &alt : def->alts) {
+        for (const QPair<int, int> &s : alt.singles) {
+            if (i++ == index) {
+                DoodadTile t; t.items.append(s.first);
+                return { t };
+            }
+        }
+        for (const DoodadDef::Composite &c : alt.composites) {
+            if (i++ == index) return c.tiles;
+        }
+    }
+    return {};
+}
+
+QVector<int> BrushStore::doodadItemIds(const QString &name) const
+{
+    const DoodadDef *def = doodadDef(name);
+    if (!def) return {};
+    QSet<int> ids;
+    for (const DoodadDef::Alt &alt : def->alts) {
+        for (const QPair<int, int> &s : alt.singles) ids.insert(s.first);
+        for (const DoodadDef::Composite &c : alt.composites)
+            for (const DoodadTile &t : c.tiles)
+                for (int id : t.items) ids.insert(id);
+    }
+    return QVector<int>(ids.begin(), ids.end());
+}
+
+QVector<BrushStore::DoodadTile> BrushStore::pickDoodad(const QString &name) const
+{
+    const DoodadDef *def = doodadDef(name);
+    if (!def || def->alts.isEmpty()) return {};
+
+    static thread_local std::mt19937 rng(std::random_device{}());
+
+    // 1. Wariant (RME: variation % alternatives.size(); u nas losowo - kazde postawienie
+    //    daje inny wariant, co daje naturalna roznorodnosc przy scatterze).
+    const DoodadDef::Alt &alt =
+        def->alts[std::uniform_int_distribution<int>(0, def->alts.size() - 1)(rng)];
+
+    const int total = alt.singleTotal + alt.compositeTotal;
+    if (total <= 0) return {};
+
+    // 2. Single czy composite - proporcjonalnie do sumy szans (jak RME).
+    int r = std::uniform_int_distribution<int>(1, total)(rng);
+    if (r <= alt.singleTotal) {
+        for (const auto &s : alt.singles) {
+            if (r <= s.second) {
+                DoodadTile t; t.dx = 0; t.dy = 0; t.items.append(s.first);
+                return { t };
+            }
+            r -= s.second;
+        }
+        if (!alt.singles.isEmpty()) {
+            DoodadTile t; t.items.append(alt.singles.front().first);
+            return { t };
+        }
+        return {};
+    }
+
+    r -= alt.singleTotal;
+    for (const auto &c : alt.composites) {
+        if (r <= c.chance) return c.tiles;
+        r -= c.chance;
+    }
+    return alt.composites.isEmpty() ? QVector<DoodadTile>{} : alt.composites.front().tiles;
+}
+
+const BrushStore::WallDef *BrushStore::wallDef(const QString &name) const
+{
+    if (name.isEmpty()) return nullptr;
+    auto it = m_walls.constFind(name);
+    return it == m_walls.constEnd() ? nullptr : &it.value();
+}
+
+int BrushStore::pickWallFromNode(const WallDef::Node &node) const
+{
+    if (node.items.isEmpty()) return 0;
+    if (node.total <= 0) return node.items.front().first;
+    static thread_local std::mt19937 rng(std::random_device{}());
+    const int r = std::uniform_int_distribution<int>(1, node.total)(rng);
+    for (const auto &pr : node.items)
+        if (r < pr.second) return pr.first;   // skumulowana szansa (jak pickGroundItem)
+    return node.items.front().first;
+}
+
+int BrushStore::wallPoleItem(const QString &name) const
+{
+    const WallDef *def = wallDef(name);
+    if (!def) return 0;
+    // wyrownanie 0 = WALL_POLE; gdy brak, bierz cokolwiek pierwszego dostepnego.
+    if (!def->align[0].items.isEmpty()) return pickWallFromNode(def->align[0]);
+    for (const auto &node : def->align)
+        if (!node.items.isEmpty()) return node.items.front().first;
+    return 0;
+}
+
+int BrushStore::computeWallItem(const QString &name, bool n, bool w, bool e, bool s) const
+{
+    const WallDef *def = wallDef(name);
+    if (!def) return 0;
+
+    // maska sasiadow: N=1 W=2 E=4 S=8 (WALLTILE_* z RME)
+    const int tiledata = (n ? 1 : 0) | (w ? 2 : 0) | (e ? 4 : 0) | (s ? 8 : 0);
+
+    // full_border_types = tozsamosc (wartosci enuma = indeks); half_border_types
+    // wg wzorca {POLE,VERTICAL,HORIZONTAL,NW_DIAGONAL}[tiledata & 3] (brush_tables.cpp).
+    static const int kFull[16] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 };
+    static const int kHalf[16] = { 0,9,6,3, 0,9,6,3, 0,9,6,3, 0,9,6,3 };
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const int align = (pass == 0) ? kFull[tiledata] : kHalf[tiledata];
+        const WallDef::Node &node = def->align[align];
+        if (!node.items.isEmpty()) return pickWallFromNode(node);
+    }
+    return 0;
+}
+
+int BrushStore::pickGroundItem(const QString &name) const
+{
+    auto it = m_grounds.find(name);
+    if (it == m_grounds.end() || it->items.isEmpty()) return 0;
+    const GroundDef &def = *it;
+    if (def.totalChance <= 0) return def.items.front().first;
+
+    static thread_local std::mt19937 rng(std::random_device{}());
+    const int r = std::uniform_int_distribution<int>(1, def.totalChance)(rng);
+    for (const auto &p : def.items)
+        if (r < p.second) return p.first;   // p.second = skumulowana szansa (jak RME)
+    return def.items.front().first;
+}
+
+bool BrushStore::friendOf(const GroundDef &self, const QString &otherName) const
+{
+    if (self.friendsAll || self.friends.contains(otherName))
+        return !self.hateFriends;
+    return self.hateFriends;
+}
+
+QString BrushStore::getBrushTo(const QString &firstName, const QString &secondName) const
+{
+    const GroundDef *first = groundDef(firstName);
+    const GroundDef *second = groundDef(secondName);
+
+    if (first) {
+        if (second) {
+            if (first->zorder < second->zorder && second->outerBorderFlag()) {
+                if (first->innerBorderFlag()) {
+                    for (const BorderBlock &bb : first->borders) {
+                        if (bb.outer) continue;
+                        if (bb.to == secondName || bb.to == QStringLiteral("*")) return bb.borderKey;
+                    }
+                }
+                for (const BorderBlock &bb : second->borders) {
+                    if (!bb.outer) continue;
+                    if (bb.to == firstName) return bb.borderKey;
+                    if (bb.to == QStringLiteral("*")) return bb.borderKey;
+                }
+            } else if (first->innerBorderFlag()) {
+                for (const BorderBlock &bb : first->borders) {
+                    if (bb.outer) continue;
+                    if (bb.to == secondName) return bb.borderKey;
+                    if (bb.to == QStringLiteral("*")) return bb.borderKey;
+                }
+            }
+        } else if (first->innerZilchFlag()) {
+            for (const BorderBlock &bb : first->borders) {
+                if (bb.outer) continue;
+                if (bb.to.isEmpty()) return bb.borderKey;
+            }
+        }
+    } else if (second && second->outerZilchFlag()) {
+        for (const BorderBlock &bb : second->borders) {
+            if (!bb.outer) continue;
+            if (bb.to.isEmpty()) return bb.borderKey;
+        }
+    }
+    return QString();
+}
+
+QVector<int> BrushStore::computeBorderItems(const QString &center, const QStringList &neighbours8) const
+{
+    QVector<int> result;
+    if (neighbours8.size() < 8) return result;
+
+    const GroundDef *borderBrush = groundDef(center);
+
+    struct NB { bool visited; QString name; const GroundDef *brush; };
+    NB nb[8];
+    for (int i = 0; i < 8; ++i) {
+        const GroundDef *d = groundDef(neighbours8.at(i));
+        nb[i] = { false, d ? neighbours8.at(i) : QString(), d };
+    }
+
+    struct Cluster { quint32 alignment; int z; const std::array<int, 13> *border; };
+    QVector<Cluster> borderList;
+
+    // Zawsze pozwalamy na border opcjonalny (gravel gor) - RME steruje tym flaga
+    // per-kafel; w Etapie 1 upraszczamy do "wlaczony".
+    const bool tileHasOptional = true;
+
+    for (int i = 0; i < 8; ++i) {
+        if (nb[i].visited) { continue; }
+        const GroundDef *other = nb[i].brush;
+        const QString &otherName = nb[i].name;
+
+        if (borderBrush) {
+            if (other) {
+                if (otherName == center) { nb[i].visited = true; continue; }
+
+                if (other->outerBorderFlag() || borderBrush->innerBorderFlag()) {
+                    bool onlyMountain = false;
+                    if (friendOf(*other, center) || friendOf(*borderBrush, otherName)) {
+                        if (!other->hasOptional()) { nb[i].visited = true; continue; }
+                        onlyMountain = true;
+                    }
+
+                    quint32 tiledata = 0;
+                    for (int j = i; j < 8; ++j) {
+                        if (!nb[j].visited && nb[j].brush && nb[j].name == otherName) {
+                            nb[j].visited = true;
+                            tiledata |= 1u << j;
+                        }
+                    }
+
+                    if (tiledata != 0) {
+                        if (other->hasOptional() && tileHasOptional) {
+                            borderList.push_back({ tiledata, 0x7FFFFFFF, borderTiles(other->optional) });
+                            if (other->useSoloOptional) onlyMountain = true;
+                        }
+                        if (!onlyMountain) {
+                            const QString key = getBrushTo(center, otherName);
+                            if (!key.isEmpty()) {
+                                const std::array<int, 13> *bt = borderTiles(key);
+                                bool found = false;
+                                for (Cluster &c : borderList) {
+                                    if (c.border == bt) {
+                                        c.alignment |= tiledata;
+                                        if (c.z < other->zorder) c.z = other->zorder;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) borderList.push_back({ tiledata, other->zorder, bt });
+                            }
+                        }
+                    }
+                }
+            } else if (borderBrush->innerZilchFlag()) {
+                quint32 tiledata = 0;
+                for (int j = i; j < 8; ++j) {
+                    if (!nb[j].visited && !nb[j].brush) {
+                        nb[j].visited = true;
+                        tiledata |= 1u << j;
+                    }
+                }
+                if (tiledata != 0) {
+                    const QString key = getBrushTo(center, QString());
+                    if (!key.isEmpty()) borderList.push_back({ tiledata, 5000, borderTiles(key) });
+                }
+                nb[i].visited = true;
+                continue;
+            }
+        } else if (other && other->outerZilchFlag()) {
+            quint32 tiledata = 0;
+            for (int j = i; j < 8; ++j) {
+                if (!nb[j].visited && nb[j].brush && nb[j].name == otherName) {
+                    nb[j].visited = true;
+                    tiledata |= 1u << j;
+                }
+            }
+            if (tiledata != 0) {
+                const QString key = getBrushTo(QString(), otherName);
+                if (!key.isEmpty()) borderList.push_back({ tiledata, other->zorder, borderTiles(key) });
+                if (other->hasOptional() && tileHasOptional)
+                    borderList.push_back({ tiledata, 0x7FFFFFFF, borderTiles(other->optional) });
+            }
+        }
+        nb[i].visited = true;
+    }
+
+    // Sortuj rosnaco po z, przetwarzaj od konca (najwyzszy z pierwszy) - jak RME.
+    std::sort(borderList.begin(), borderList.end(),
+              [](const Cluster &a, const Cluster &b) { return a.z < b.z; });
+
+    while (!borderList.isEmpty()) {
+        const Cluster c = borderList.back();
+        borderList.pop_back();
+        if (!c.border) continue;
+
+        const quint32 packed = kBorderTypes[c.alignment & 0xFF];
+        const int directions[4] = {
+            static_cast<int>((packed & 0x000000FF) >> 0),
+            static_cast<int>((packed & 0x0000FF00) >> 8),
+            static_cast<int>((packed & 0x00FF0000) >> 16),
+            static_cast<int>((packed & 0xFF000000) >> 24),
+        };
+        const std::array<int, 13> &t = *c.border;
+        for (int d = 0; d < 4; ++d) {
+            const int dir = directions[d];
+            if (dir == BT_NONE) break;
+            if (t[dir]) {
+                result.push_back(t[dir]);
+            } else if (dir == BT_DNW) {
+                if (t[BT_W]) result.push_back(t[BT_W]);
+                if (t[BT_N]) result.push_back(t[BT_N]);
+            } else if (dir == BT_DNE) {
+                if (t[BT_E]) result.push_back(t[BT_E]);
+                if (t[BT_N]) result.push_back(t[BT_N]);
+            } else if (dir == BT_DSW) {
+                if (t[BT_S]) result.push_back(t[BT_S]);
+                if (t[BT_W]) result.push_back(t[BT_W]);
+            } else if (dir == BT_DSE) {
+                if (t[BT_S]) result.push_back(t[BT_S]);
+                if (t[BT_E]) result.push_back(t[BT_E]);
+            }
+        }
+    }
+    return result;
+}

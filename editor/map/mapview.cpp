@@ -1,0 +1,355 @@
+// MapView - RDZEN: konstruktor/destruktor, wpiecie readerow, wlasciwosci
+// widoku (pietro, rozmiar kafelka, warstwy), wczytywanie mapy, przebudowa
+// atlasu po zaladowaniu klienta, centrowanie widoku.
+#include "mapview.h"
+#include "mapview_p.h"
+
+#include <QPainter>
+#include <QBuffer>
+#include <QMouseEvent>
+#include <QHoverEvent>
+#include <QWheelEvent>
+#include <QCursor>
+#include <QKeyEvent>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <QGuiApplication>
+#include <QSet>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <vector>
+
+
+MapView::MapView(QQuickItem *parent)
+    : QQuickItem(parent)
+{
+    // MapView NIE renderuje juz sam (Scene Graph usuniety) - jest kontrolerem:
+    // dane (atlas/indeks/watek), stan widoku i obsluga myszy/klawiatury. Render
+    // robi MapGLView (OpenGL instancing) czytajac z tego itemu przez 'source'.
+    setFlag(ItemHasContents, false);
+    // Lewy = zaznaczanie (jak edytor); prawy/srodkowy = panning.
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton | Qt::MiddleButton);
+    setAcceptHoverEvents(true);
+    m_effectClock.start();   // zegar animacji efektow magicznych
+    startWorker();   // watek liczacy quady chunkow w tle (async background loading)
+}
+
+
+void MapView::setShowLowerFloors(bool on)
+{
+    if (m_showLowerFloors == on) return;
+    m_showLowerFloors = on;
+    m_lightChunks.clear();   // zakres widocznych pieter = inne zrodla swiatla
+    m_lightDirty = true;
+    // Zmiane zakresu rysowanych pieter wykrywa MapGLView (glBottomFloor w sync).
+    emit showLowerFloorsChanged();
+    emit contentUpdated(); update();
+}
+
+
+bool MapView::loadMap(const QString &path)
+{
+    if (!m_otbm) return false;
+    // Lock trzymany PRZEZ CALY loadFile(): OtbmReader resetuje/realokuje m_tiles
+    // (deque) i m_posIndex bez wiedzy o watku roboczym - bez tego locka worker
+    // moze w tym momencie czytac (przez OtbmTile* w m_floorChunkTiles) kafelki
+    // ktore reset() wlasnie kasuje (use-after-free, zalezny od timingu = "czasem
+    // dziala czasem nie"). m_dataMutex jest rekurencyjny: loadFile() NA KONCU
+    // synchronicznie emituje loadedChanged -> onMapLoaded(), ktore tez lockuje
+    // ten sam mutex (na tym samym watku) - musi to byc dozwolone bez deadlocku.
+    std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+    return m_otbm->loadFile(path);
+}
+
+void MapView::rebuildAtlas()
+{
+    {   // buildAtlasImage PISZE atlas (watek roboczy go czyta) - pod lockiem
+        std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+        buildAtlasImage();
+    }
+    clearChunkQuadCache();   // pusty/stary atlas -> quady do przeliczenia z nowym atlasem
+    m_atlasDirty = true;
+    emit atlasChanged();
+    emit contentUpdated(); update();
+}
+
+void MapView::setOtbm(OtbmReader *reader)
+{
+    if (m_otbm == reader) return;
+    if (m_otbm) disconnect(m_otbm, nullptr, this, nullptr);
+    m_otbm = reader;
+    if (m_otbm) connect(m_otbm, &OtbmReader::loadedChanged, this, &MapView::onMapLoaded);
+    emit readersChanged();
+    onMapLoaded();
+}
+
+void MapView::setOtb(OtbReader *reader)
+{
+    if (m_otb == reader) return;
+    m_otb = reader;
+    emit readersChanged();
+    onMapLoaded();
+}
+
+void MapView::setDat(DatReader *reader)
+{
+    if (m_dat == reader) return;
+    m_dat = reader;
+    emit readersChanged();
+    onMapLoaded();
+}
+
+void MapView::setSpr(SprReader *reader)
+{
+    if (m_spr == reader) return;
+    m_spr = reader;
+    emit readersChanged();
+    onMapLoaded();
+}
+
+void MapView::setFloor(int floor)
+{
+    floor = std::clamp(floor, 0, 15);
+    if (m_floor == floor) return;
+    m_floor = floor;
+    emit floorChanged();
+    m_spawnMarksDirty = true;   // markery spawnow dotycza pietra (leniwa przebudowa)
+    m_lightChunks.clear();      // projekcja swiatel zalezy od pietra - caly cache stary
+    m_lightDirty = true;
+    // Zaznaczenie NIE jest czyszczone: klucz selekcji niesie pietro (selKey), wiec
+    // zaznaczone kafle na innych pietrach zyja dalej (multi-floor, jak RME).
+    // BEZ updateCurrentFloor() - lookup kafelka idzie teraz przez O(1) tileAt, wiec
+    // zmiana pietra jest natychmiastowa (zaden skan calego pietra). To naprawia
+    // spadki FPS przy czestym przelaczaniu pieter na full zoomie.
+    emit contentUpdated(); update();
+}
+
+void MapView::setTileSize(int size)
+{
+    size = std::clamp(size, 1, 256);
+    if (m_tileSize == size) return;
+    m_tileSize = size;
+    emit tileSizeChanged();
+    emit contentUpdated(); update();
+}
+
+QString MapView::doodadPreviewSource(int serverId) const
+{
+    if (!m_brushStore || !m_otb || !m_dat || !m_spr || serverId <= 0) return QString();
+    const QString name = m_brushStore->doodadBrushForServerId(serverId);
+    if (name.isEmpty()) return QString();
+    const QVector<BrushStore::DoodadTile> tiles = m_brushStore->doodadPreviewTiles(name);
+    if (tiles.isEmpty()) return QString();   // doodad bez compositu - zwykla ikona
+
+    auto clientItemFor = [&](int sid) -> const ClientItem * {
+        const int cid = m_otb->clientIdForServerId(static_cast<uint16_t>(sid));
+        return cid > 0 ? m_dat->itemByClientId(static_cast<uint16_t>(cid)) : nullptr;
+    };
+    // Pietra rysuja sie ukosnie: kafel o offsecie pietra dz laduje wizualnie na
+    // (dx+dz, dy+dz) - tak jak uFloorOff w shaderze. Dzieki temu wodospad/rampa
+    // wygladaja w podgladzie tak jak na mapie, a nie splaszczone na jednym poziomie.
+    auto effX = [](const BrushStore::DoodadTile &t) { return t.dx + t.dz; };
+    auto effY = [](const BrushStore::DoodadTile &t) { return t.dy + t.dz; };
+
+    // Kolejnosc malarza: NIZSZE pietra (wieksze dz) najpierw, wyzsze na wierzchu.
+    QVector<BrushStore::DoodadTile> ordered = tiles;
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const BrushStore::DoodadTile &a, const BrushStore::DoodadTile &b) {
+                         return a.dz > b.dz;
+                     });
+
+    // Zbieramy gotowe rysunki z pozycjami w PIKSELACH. Bounds musza uwzgledniac
+    // displacement i elevation, bo o nie przesuwa sie rysowanie - liczone z samych
+    // wspolrzednych kafli obcinaly itemy z offsetem (np. statuy) na krawedzi platna.
+    struct Draw { QImage img; int px, py; };
+    QVector<Draw> draws;
+    for (const BrushStore::DoodadTile &t : ordered) {
+        int elevation = 0;                // akumuluje sie w stosie kafla (jak w renderze)
+        for (int id : t.items) {          // itemy kafla od dolu do gory
+            const ClientItem *ci = clientItemFor(id);
+            if (!ci || ci->sprite_ids.empty()) continue;
+            const int w = std::max<int>(1, ci->width);
+            const int h = std::max<int>(1, ci->height);
+            const int layers = std::max<int>(1, ci->layers);
+            // Displacement/elevation jak w appendItemQuads - podglad ma pokazywac to,
+            // co realnie wyladuje na mapie.
+            const int ox = ci->has_offset ? ci->offset_x : 0;
+            const int oy = ci->has_offset ? ci->offset_y : 0;
+            const int elev = elevation;
+            if (ci->has_elevation) elevation += ci->elevation;
+            for (int l = 0; l < layers; ++l)
+                for (int hh = 0; hh < h; ++hh)
+                    for (int ww = 0; ww < w; ++ww) {
+                        const int idx = ((l * h) + hh) * w + ww;   // jak SprReader::itemImageSource
+                        if (idx < 0 || idx >= static_cast<int>(ci->sprite_ids.size())) continue;
+                        const uint32_t sp = ci->sprite_ids[static_cast<size_t>(idx)];
+                        if (sp == 0) continue;
+                        auto sprite = m_spr->loadSprite(sp);
+                        if (!sprite || sprite->image.isNull()) continue;
+                        draws.push_back({ sprite->image,
+                                          (effX(t) - ww) * kSprite - ox - elev,
+                                          (effY(t) - hh) * kSprite - oy - elev });
+                    }
+        }
+    }
+    if (draws.isEmpty()) return QString();   // nic renderowalnego
+
+    int minPx = draws[0].px, minPy = draws[0].py;
+    int maxPx = minPx, maxPy = minPy;
+    for (const Draw &d : draws) {
+        minPx = std::min(minPx, d.px);              maxPx = std::max(maxPx, d.px + d.img.width());
+        minPy = std::min(minPy, d.py);              maxPy = std::max(maxPy, d.py + d.img.height());
+    }
+    const int wpx = maxPx - minPx, hpx = maxPy - minPy;
+    if (wpx <= 0 || hpx <= 0 || wpx > 64 * kSprite || hpx > 64 * kSprite) return QString();  // sanity
+
+    QImage img(wpx, hpx, QImage::Format_RGBA8888);
+    img.fill(Qt::transparent);
+    QPainter p(&img);
+    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    for (const Draw &d : draws)
+        p.drawImage(d.px - minPx, d.py - minPy, d.img);
+    p.end();
+
+    QByteArray bytes;
+    QBuffer buf(&bytes);
+    buf.open(QIODevice::WriteOnly);
+    img.save(&buf, "PNG");
+    buf.close();
+    return QStringLiteral("data:image/png;base64,") + QString::fromLatin1(bytes.toBase64());
+}
+
+void MapView::setEraseMode(bool on)
+{
+    if (m_eraseMode == on) return;
+    m_eraseMode = on;
+    setCursor((on || m_brushServerId > 0 || m_activeZone != 0) ? Qt::CrossCursor : Qt::ArrowCursor);
+    emit eraseModeChanged();
+    emit contentUpdated(); update();   // kursor-box gumki
+}
+
+void MapView::setActiveZone(int zone)
+{
+    const quint32 z = static_cast<quint32>(zone < 0 ? 0 : zone);
+    if (m_activeZone == z) return;
+    m_activeZone = z;
+    if (z != 0) {
+        // Strefa wyklucza sie z pedzlem itemow i wlacza tryb rysowania (jak wybor pedzla).
+        if (m_brushServerId != 0) {
+            m_brushServerId = 0;
+            m_activeGroundBrush.clear();
+            m_activeWallBrush.clear();
+            m_activeDoodadBrush.clear();
+            emit brushChanged();
+        }
+        if (m_selectionMode) { m_selectionMode = false; emit selectionModeChanged(); }
+    }
+    setCursor(z != 0 ? Qt::CrossCursor : Qt::ArrowCursor);
+    emit activeZoneChanged();
+    emit contentUpdated(); update();
+}
+
+void MapView::setSelectionMode(bool on)
+{
+    if (m_selectionMode == on) return;
+    m_selectionMode = on;
+    // W trybie zaznaczania kursor strzalka (nie krzyzyk pedzla), nawet gdy pedzel aktywny.
+    setCursor(on ? Qt::ArrowCursor : (m_brushServerId > 0 ? Qt::CrossCursor : Qt::ArrowCursor));
+    emit selectionModeChanged();
+    emit contentUpdated(); update();   // odswiez (znika/pojawia sie box podgladu pedzla)
+}
+
+void MapView::applyBrushServerId(int serverId, bool asBrush)
+{
+    if (serverId < 0) serverId = 0;
+    // Wybor pedzla z palety = wejscie w tryb rysowania (jak RME SetDrawingMode)
+    // i wylaczenie pedzla strefy (wzajemnie sie wykluczaja).
+    if (serverId > 0) {
+        if (m_selectionMode) { m_selectionMode = false; emit selectionModeChanged(); }
+        if (m_activeZone != 0) { m_activeZone = 0; emit activeZoneChanged(); }
+        m_creatureBrush.clear();   // pedzle wykluczaja sie (jak w RME)
+        m_spawnBrush = false;
+    }
+    if (m_brushServerId == serverId) return;
+    m_brushServerId = serverId;
+    // Tryb ground brusha (auto-bordery) tylko gdy wolane z palety brushowej (asBrush)
+    // ORAZ id nalezy do ground brusha. Palety All Items/RAW wolaja z asBrush=false ->
+    // zawsze surowy pojedynczy item (jak w RME).
+    m_activeGroundBrush = (asBrush && m_brushStore && serverId > 0)
+                              ? m_brushStore->groundBrushForServerId(serverId)
+                              : QString();
+    // Wall brush (auto-laczenie scian) - jak ground, tylko gdy wolane jako brush i id
+    // nalezy do wall brusha. Wzajemnie wyklucza sie z ground brushem.
+    m_activeWallBrush = (asBrush && m_brushStore && serverId > 0)
+                            ? m_brushStore->wallBrushForServerId(serverId)
+                            : QString();
+    // Doodad brush (stemple/warianty obiektow) - analogicznie; id = lookid doodada.
+    const QString prevDoodad = m_activeDoodadBrush;
+    m_activeDoodadBrush = (asBrush && m_brushStore && serverId > 0)
+                              ? m_brushStore->doodadBrushForServerId(serverId)
+                              : QString();
+    // Nowy doodad -> reset wariantu na losowy (R zaczyna od 0). Ten sam -> zostaw.
+    if (m_activeDoodadBrush != prevDoodad) m_doodadVariant = -1;
+    setCursor(serverId > 0 ? Qt::CrossCursor : Qt::ArrowCursor);
+    if (serverId > 0) {   // proaktywnie dodaj sprite'y pedzla do atlasu (przed malowaniem)
+        std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+        ensureItemSprites(serverId);
+        // Doodad sklada sie z WIELU itemow - bez ich sprite'ow ghost pokazywalby tylko
+        // czesc (te, ktore juz sa w atlasie). Dodaj cala liste od razu.
+        if (!m_activeDoodadBrush.isEmpty() && m_brushStore)
+            for (int id : m_brushStore->doodadItemIds(m_activeDoodadBrush))
+                ensureItemSprites(id);
+    }
+    emit brushChanged();
+    emit contentUpdated(); update();
+}
+
+void MapView::onMapLoaded()
+{
+    // Dane CPU budujemy na watku GUI; teksture atlasu wgrywa MapGLView w sync.
+    rebuildFloorIndex();   // pod lockiem + czysci cache quadow
+    {   // buildAtlasImage PISZE atlas (m_spriteToSlot) - watek roboczy go czyta
+        std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+        buildAtlasImage();
+    }
+    clearChunkQuadCache(); // nowy atlas -> quady do przeliczenia w tle
+    m_atlasDirty = true;  // tekstura do (re)utworzenia
+    m_floorDirty = true;  // chunki do przebudowy
+    emit atlasChanged();
+    centerOnContent();
+    emit contentUpdated(); update();
+}
+
+void MapView::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    QQuickItem::geometryChange(newGeometry, oldGeometry);
+    emit contentUpdated(); update();
+}
+
+void MapView::centerOnContent()
+{
+    updateCurrentFloor();   // przelicz bbox biezacego pietra (na zadanie - rzadkie)
+    if (m_currentFloorTiles.isEmpty() && m_floorChunkTiles.isEmpty()) {
+        m_originX = 0;
+        m_originY = 0;
+        emit contentUpdated(); update();
+        return;
+    }
+    const qreal viewTilesW = width() / std::max(1, m_tileSize);
+    const qreal viewTilesH = height() / std::max(1, m_tileSize);
+    m_originX = (m_minTileX + m_maxTileX + 1) / 2.0 - viewTilesW / 2.0;
+    m_originY = (m_minTileY + m_maxTileY + 1) / 2.0 - viewTilesH / 2.0;
+    emit contentUpdated(); update();
+}
+
+void MapView::centerOnTile(int x, int y, int z)
+{
+    if (z >= 0 && z <= 15 && z != m_floor) setFloor(z);
+    const qreal viewTilesW = width() / std::max(1, m_tileSize);
+    const qreal viewTilesH = height() / std::max(1, m_tileSize);
+    m_originX = x + 0.5 - viewTilesW / 2.0;
+    m_originY = y + 0.5 - viewTilesH / 2.0;
+    emit contentUpdated(); update();
+}
+
