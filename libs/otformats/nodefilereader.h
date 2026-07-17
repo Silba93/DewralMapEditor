@@ -44,8 +44,13 @@ private:
         Escape = 0xFD
     };
 
-    bool parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node);
-    bool parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node);
+    // depth: biezaca glebokosc zagniezdzenia. Poprawne pliki OTBM/OTB maja
+    // drzewa plytkie (mapa ~5 poziomow + kontenery w kontenerach), ale format
+    // pozwala zagniezdzac bez ograniczen - spreparowany plik z tysiacami
+    // otwartych 0xFE moglby przepelnic stos przez te wzajemna rekurencje.
+    static constexpr int kMaxDepth = 512;
+    bool parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth);
+    bool parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth);
     void setError(const QString &message);
 
     BinaryNode m_root;

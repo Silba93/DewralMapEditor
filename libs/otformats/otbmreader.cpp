@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 #include <QHash>
 #include <QXmlStreamReader>
@@ -44,6 +45,40 @@ void writeMapItem(NodeWriter &w, const OtbmMapItem &item)
     if (item.action_id) { w.data(static_cast<uint8_t>(OtbmAttribute::ActionId)); w.u16(static_cast<uint16_t>(item.action_id)); }
     if (item.unique_id) { w.data(static_cast<uint8_t>(OtbmAttribute::UniqueId)); w.u16(static_cast<uint16_t>(item.unique_id)); }
     if (item.depot_id)  { w.data(static_cast<uint8_t>(OtbmAttribute::DepotId));  w.u16(item.depot_id); }
+    // Odtwarzane 1:1 przy zapisie (patrz komentarz przy OtbmItemExtra) - bez tego
+    // kazdy load+save w DME kasowal teleporty/znaki/drzwi domow/tier/podia.
+    // extra == null dla wiekszosci itemow -> zero pracy w typowym przypadku.
+    if (item.extra) {
+        const OtbmItemExtra &e = *item.extra;
+        if (!e.text.isEmpty()) {
+            w.data(static_cast<uint8_t>(OtbmAttribute::Text));
+            w.str(e.text);
+        }
+        if (!e.description.isEmpty()) {
+            w.data(static_cast<uint8_t>(OtbmAttribute::Desc));
+            w.str(e.description);
+        }
+        if (e.has_teleport) {
+            w.data(static_cast<uint8_t>(OtbmAttribute::TeleportDest));
+            w.u16(e.tele_x);
+            w.u16(e.tele_y);
+            w.data(e.tele_z);
+        }
+        if (e.door_id) {
+            w.data(static_cast<uint8_t>(OtbmAttribute::HouseDoorId));
+            w.data(e.door_id);
+        }
+        if (e.tier) {
+            w.data(static_cast<uint8_t>(OtbmAttribute::Tier));
+            w.data(e.tier);
+        }
+        if (e.podium_raw.size() == 15) {
+            w.data(static_cast<uint8_t>(OtbmAttribute::PodiumOutfit));
+            for (char b : e.podium_raw) {
+                w.data(static_cast<uint8_t>(b));
+            }
+        }
+    }
     for (const OtbmMapItem &child : item.children) {
         writeMapItem(w, child);
     }
@@ -55,9 +90,14 @@ void writeMapItem(NodeWriter &w, const OtbmMapItem &item)
 namespace {
 
 // Atrybuty itemu, ktore potrafimy bezpiecznie przeczytac z poziomu wezla.
-// Przy nieznanym atrybucie przerywamy parsowanie atrybutow danego itemu -
-// zawartosc kontenerow i tak siedzi w dzieciach wezla, wiec nic nie tracimy
-// z punktu widzenia podgladu mapy.
+// Obejmuje juz wszystkie atrybuty o STALEJ dlugosci, jakie realnie wystepuja
+// na mapach RME/TFS (Count/Charges/ActionId/UniqueId/DepotId/Text/Desc/
+// TeleportDest/HouseDoorId/Tier/PodiumOutfit) - te sa odczytywane I zapisywane
+// z powrotem (patrz writeMapItem), wiec load+save jest dla nich bezstratny.
+// Przy NAPRAWDE nieznanym atrybucie (np. OTBM_ATTR_ATTRIBUTE_MAP z OTBM v4)
+// przerywamy parsowanie dalszych atrybutow tego itemu - zawartosc kontenerow
+// i tak siedzi w dzieciach wezla, wiec ona sie nie gubi; ginie tylko ten
+// pojedynczy, nierozpoznany atrybut.
 bool readItemAttribute(BinaryNode &node, OtbmAttribute attr, OtbmMapItem &item)
 {
     switch (attr) {
@@ -92,8 +132,55 @@ bool readItemAttribute(BinaryNode &node, OtbmAttribute attr, OtbmMapItem &item)
         item.depot_id = value;
         return true;
     }
+    // Ponizsze byly kiedys "nieznane" i przerywaly parsowanie atrybutow itemu -
+    // co przy zapisie kasowalo je BEZPOWROTNIE (teleporty/znaki/drzwi domow).
+    // Uklad bajtow 1:1 z RME (OTAcademy/RME, iomap_otbm.cpp).
+    case OtbmAttribute::Text: {
+        QString value;
+        if (!node.getString(value)) return false;
+        item.ensureExtra().text = value;
+        return true;
+    }
+    case OtbmAttribute::Desc: {
+        QString value;
+        if (!node.getString(value)) return false;
+        item.ensureExtra().description = value;
+        return true;
+    }
+    case OtbmAttribute::TeleportDest: {
+        uint16_t x = 0, y = 0;
+        uint8_t z = 0;
+        if (!node.getU16(x) || !node.getU16(y) || !node.getU8(z)) return false;
+        OtbmItemExtra &e = item.ensureExtra();
+        e.has_teleport = true;
+        e.tele_x = x;
+        e.tele_y = y;
+        e.tele_z = z;
+        return true;
+    }
+    case OtbmAttribute::HouseDoorId: {
+        uint8_t value = 0;
+        if (!node.getU8(value)) return false;
+        item.ensureExtra().door_id = value;
+        return true;
+    }
+    case OtbmAttribute::Tier: {
+        uint8_t value = 0;
+        if (!node.getU8(value)) return false;
+        item.ensureExtra().tier = value;
+        return true;
+    }
+    case OtbmAttribute::PodiumOutfit: {
+        // 15 surowych bajtow (flagi, kierunek, outfit, mount) - patrz komentarz
+        // przy OtbmItemExtra::podium_raw. Trzymane 1:1, bez interpretacji.
+        QByteArray raw;
+        if (!node.readBytes(15, raw)) return false;
+        item.ensureExtra().podium_raw = raw;
+        return true;
+    }
     default:
-        // Nieznana/zmiennej dlugosci - nie ryzykujemy zlego offsetu.
+        // Naprawde nieznana/zmiennej dlugosci (np. OTBM_ATTR_ATTRIBUTE_MAP z
+        // OTBM v4, ktorego DME nie zapisuje) - nie ryzykujemy zlego offsetu.
         return false;
     }
 }
@@ -107,6 +194,20 @@ QVariantMap itemToVariant(const OtbmMapItem &item)
     if (item.action_id) map.insert(QStringLiteral("actionId"), item.action_id);
     if (item.unique_id) map.insert(QStringLiteral("uniqueId"), item.unique_id);
     if (item.depot_id) map.insert(QStringLiteral("depotId"), item.depot_id);
+    // Wystawione dla przyszlego UI (np. Item Properties) - dane sa teraz
+    // zachowywane przy zapisie (patrz OtbmItemExtra), wiec warto je juz udostepnic.
+    if (item.extra) {
+        const OtbmItemExtra &e = *item.extra;
+        if (!e.text.isEmpty()) map.insert(QStringLiteral("text"), e.text);
+        if (!e.description.isEmpty()) map.insert(QStringLiteral("description"), e.description);
+        if (e.has_teleport) {
+            map.insert(QStringLiteral("teleportX"), e.tele_x);
+            map.insert(QStringLiteral("teleportY"), e.tele_y);
+            map.insert(QStringLiteral("teleportZ"), e.tele_z);
+        }
+        if (e.door_id) map.insert(QStringLiteral("doorId"), e.door_id);
+        if (e.tier) map.insert(QStringLiteral("tier"), e.tier);
+    }
     return map;
 }
 
@@ -758,7 +859,8 @@ bool OtbmReader::saveSpawnsXml(const QString &mapPath)
         m_spawnFile = QFileInfo(mapPath).completeBaseName() + QStringLiteral("-spawn.xml");
 
     const QString path = QFileInfo(mapPath).dir().filePath(m_spawnFile);
-    QFile f(path);
+    // QSaveFile jak w saveFile: awaria w trakcie nie niszczy istniejacego pliku.
+    QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         setError(QStringLiteral("Nie mozna zapisac spawnow: %1").arg(path));
         return false;
@@ -801,6 +903,10 @@ bool OtbmReader::saveSpawnsXml(const QString &mapPath)
 
     xml.writeEndElement();
     xml.writeEndDocument();
+    if (!f.commit()) {
+        setError(QStringLiteral("Blad zapisu spawnow: %1").arg(path));
+        return false;
+    }
     return true;
 }
 
@@ -842,7 +948,8 @@ bool OtbmReader::saveHousesXml(const QString &mapPath)
         if (t.is_house && t.house_id > 0) sizes[t.house_id]++;
 
     const QString path = QFileInfo(mapPath).dir().filePath(m_houseFile);
-    QFile f(path);
+    // QSaveFile jak w saveFile: awaria w trakcie nie niszczy istniejacego pliku.
+    QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         setError(QStringLiteral("Nie mozna zapisac domow: %1").arg(path));
         return false;
@@ -868,6 +975,10 @@ bool OtbmReader::saveHousesXml(const QString &mapPath)
     }
     xml.writeEndElement();
     xml.writeEndDocument();
+    if (!f.commit()) {
+        setError(QStringLiteral("Blad zapisu domow: %1").arg(path));
+        return false;
+    }
     return true;
 }
 
@@ -1488,14 +1599,17 @@ bool OtbmReader::saveFile(const QString &path)
     w.end(); // MapData
     w.end(); // root
 
-    QFile file(path);
+    // QSaveFile: zapis idzie do pliku tymczasowego i dopiero commit() atomowo go
+    // podmienia na docelowy. Awaria w trakcie (brak miejsca, crash, wyciagniety
+    // pendrive) zostawia STARY plik nienaruszony, zamiast urwanej mapy - bez tego
+    // nieudany zapis kasowal jedyna kopie mapy uzytkownika.
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         setError(QStringLiteral("Nie mozna zapisac pliku: %1").arg(path));
         return false;
     }
     const qint64 written = file.write(w.buf);
-    file.close();
-    if (written != w.buf.size()) {
+    if (written != w.buf.size() || !file.commit()) {
         setError(QStringLiteral("Blad zapisu pliku: %1").arg(path));
         return false;
     }

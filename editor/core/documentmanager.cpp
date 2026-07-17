@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QVariantMap>
 
+#include <algorithm>
+
 DocumentManager::DocumentManager(QObject *parent)
     : QObject(parent)
 {
@@ -53,6 +55,12 @@ bool DocumentManager::closeDocument(int i)
 {
     if (i < 0 || i >= m_docs.size()) return false;
 
+    // Zapamietaj AKTYWNY dokument PRZED usunieciem: takeAt(i) przesuwa w dol indeksy
+    // wszystkich kart za i, wiec samo trzymanie m_current jako liczby przelaczaloby
+    // po cichu na inna mape gdy zamkniemy karte LEZACA PRZED aktywna. Zamiast liczyc
+    // na indeksie, po usunieciu odnajdujemy ten sam wskaznik.
+    OtbmReader *cur = m_docs.value(m_current, nullptr);
+
     OtbmReader *doc = m_docs.takeAt(i);
     // deleteLater, nie delete: MapView/bindingi QML moga jeszcze trzymac wskaznik
     // dopoki currentChanged sie nie przepropaguje - kasujemy po powrocie do petli.
@@ -62,7 +70,11 @@ bool DocumentManager::closeDocument(int i)
         newDocument();   // emituje oba sygnaly
         return true;     // nic zaladowanego - QML wraca na ekran startowy
     }
-    if (m_current >= m_docs.size()) m_current = static_cast<int>(m_docs.size()) - 1;
+    // Aktywna karta nadal istnieje (zamknieto inna) -> zostajemy na niej, tylko z
+    // poprawionym indeksem. Zamknieto aktywna -> klamrujemy do dostepnego zakresu.
+    const int idx = (cur && cur != doc) ? static_cast<int>(m_docs.indexOf(cur)) : -1;
+    m_current = idx >= 0 ? idx
+                         : std::min(m_current, static_cast<int>(m_docs.size()) - 1);
     emit tabsChanged();
     emit currentChanged();
 

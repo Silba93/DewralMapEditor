@@ -3,12 +3,14 @@
 
 #include <QObject>
 #include <QString>
+#include <QByteArray>
 #include <QHash>
 #include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <vector>
 
 class BinaryNode;
@@ -95,6 +97,31 @@ enum OtbmTileFlag : uint32_t {
     TileRefresh = 1u << 5
 };
 
+// Rzadkie atrybuty itemu (teleport/tekst/drzwi/tier/podium). Wydzielone z
+// OtbmMapItem i trzymane ZA WSKAZNIKIEM (null dla ogromnej wiekszosci itemow) -
+// dokladnie jak RME trzyma Item::attributes. Powod: OtbmMapItem jest masowo
+// KOPIOWANY na watku GUI (snapshoty undo per kafel pociagniecia, schowek). Gdy
+// te pola siedzialy inline, kazdy item urosl ~2x (2x QString + QByteArray),
+// przez co snapshoty undo przy malowaniu duzym pedzlem zjadaly FPS. Za
+// wskaznikiem zwykly item ma znowu maly, tani-w-kopii rozmiar, a plac pod
+// atrybuty alokuje sie tylko dla itemow, ktore je faktycznie maja.
+// Uklad bajtow 1:1 z RME (OTAcademy/RME, source/iomap_otbm.cpp:
+// Teleport/Door/Item::readItemAttribute_OTBM) - pliki zostaja zgodne z RME/TFS.
+struct OtbmItemExtra {
+    QString text;              // OTBM_ATTR_TEXT (6) - napis na znaku/ksiazce
+    QString description;       // OTBM_ATTR_DESC (7) - opis (rzadko uzywane)
+    bool has_teleport = false; // czy tele_* sa wazne (0,0,0 tez jest legalnym celem)
+    uint16_t tele_x = 0;       // OTBM_ATTR_TELE_DEST (8): u16 x, u16 y, u8 z
+    uint16_t tele_y = 0;
+    uint8_t tele_z = 0;
+    uint8_t door_id = 0;       // OTBM_ATTR_HOUSEDOORID (14): u8 - RME Door::doorId
+    uint8_t tier = 0;          // OTBM_ATTR_TIER (41): u8 - "Fiendish"/forge tier
+    // OTBM_ATTR_PODIUMOUTFIT (40): 15 surowych bajtow (flagi+kierunek+outfit+mount).
+    // Edytor nie ma jeszcze UI do edycji wygladu podium - trzymamy 1:1 i
+    // odtwarzamy bez interpretacji, byle nie gubic danych przy load+save.
+    QByteArray podium_raw;
+};
+
 struct OtbmMapItem {
     uint16_t server_id = 0;
     uint16_t count = 1;
@@ -102,8 +129,39 @@ struct OtbmMapItem {
     uint32_t action_id = 0;
     uint32_t unique_id = 0;
     bool is_ground = false;
+
+    // null = zwykly item bez specjalnych atrybutow (przypadek dominujacy).
+    std::unique_ptr<OtbmItemExtra> extra;
+
     // Zawartosc kontenerow (rekurencyjnie). Puste dla zwyklych itemow.
     std::vector<OtbmMapItem> children;
+
+    OtbmMapItem() = default;
+    OtbmMapItem(OtbmMapItem &&) = default;
+    OtbmMapItem &operator=(OtbmMapItem &&) = default;
+    // Kopia GLEBOKA: unique_ptr nie jest kopiowalny, a OtbmMapItem musi zostac
+    // typem wartosciowym (snap.items = t.items, item = src itd.). Klonujemy extra,
+    // zeby dwie kopie nie dzielily atrybutow (edycja jednej nie ruszala drugiej).
+    OtbmMapItem(const OtbmMapItem &o)
+        : server_id(o.server_id), count(o.count), depot_id(o.depot_id),
+          action_id(o.action_id), unique_id(o.unique_id), is_ground(o.is_ground),
+          extra(o.extra ? std::make_unique<OtbmItemExtra>(*o.extra) : nullptr),
+          children(o.children) {}
+    OtbmMapItem &operator=(const OtbmMapItem &o) {
+        if (this != &o) {
+            server_id = o.server_id; count = o.count; depot_id = o.depot_id;
+            action_id = o.action_id; unique_id = o.unique_id; is_ground = o.is_ground;
+            extra = o.extra ? std::make_unique<OtbmItemExtra>(*o.extra) : nullptr;
+            children = o.children;
+        }
+        return *this;
+    }
+
+    // Leniwie tworzy blok atrybutow do zapisu (odczyt OTBM / przyszla edycja UI).
+    OtbmItemExtra &ensureExtra() {
+        if (!extra) extra = std::make_unique<OtbmItemExtra>();
+        return *extra;
+    }
 };
 
 struct OtbmTile {

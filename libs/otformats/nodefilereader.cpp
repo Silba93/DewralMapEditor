@@ -142,7 +142,7 @@ bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &ac
     }
     ++pos;
 
-    if (!parseNode(data, pos, m_root)) {
+    if (!parseNode(data, pos, m_root, 0)) {
         return false;
     }
 
@@ -150,8 +150,13 @@ bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &ac
     return true;
 }
 
-bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node)
+bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth)
 {
+    if (depth > kMaxDepth) {
+        setError(QStringLiteral("Zbyt glebokie zagniezdzenie node'ow (uszkodzony plik?)"));
+        return false;
+    }
+
     while (pos < data.size()) {
         uint8_t byte = static_cast<uint8_t>(data.at(pos));
         ++pos;
@@ -168,7 +173,7 @@ bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNod
 
         if (byte == Start) {
             --pos;
-            return parseChildNodes(data, pos, node);
+            return parseChildNodes(data, pos, node, depth);
         }
 
         if (byte == End) {
@@ -182,7 +187,7 @@ bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNod
     return false;
 }
 
-bool NodeFileReader::parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node)
+bool NodeFileReader::parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth)
 {
     while (pos < data.size()) {
         uint8_t marker = static_cast<uint8_t>(data.at(pos));
@@ -190,7 +195,7 @@ bool NodeFileReader::parseChildNodes(const QByteArray &data, qsizetype &pos, Bin
 
         if (marker == Start) {
             BinaryNode child;
-            if (!parseNode(data, pos, child)) {
+            if (!parseNode(data, pos, child, depth + 1)) {
                 return false;
             }
             node.m_children.append(std::move(child));
