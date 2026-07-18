@@ -617,18 +617,26 @@ void MapView::drawDragRect(int x0, int y0, int x1, int y1)
     // kosztowac ~0.7s przy 100k kafli. Wnetrzu wystarczy sprzatniecie osieroconych
     // borderow po STARYM terenie (tani skan itemow kafla).
     if (groundFill && m_automagic) {
+        m_groundNameCache.clear();
+        m_groundNameCacheOn = true;   // jak w paintAt - sasiedzi granicy sie pokrywaja
         for (int y = y0 - 1; y <= y1 + 1; ++y)
             for (int x = x0 - 1; x <= x1 + 1; ++x)
                 if (x <= x0 || x >= x1 || y <= y0 || y >= y1)
                     recomputeBordersAt(x, y);
+        m_groundNameCacheOn = false;
+        m_groundNameCache.clear();
         for (int y = y0 + 1; y <= y1 - 1; ++y)
             for (int x = x0 + 1; x <= x1 - 1; ++x)
                 cleanManagedBordersAt(x, y);
         m_strokeBorderTiles.clear();   // nic nie zbieralismy, ale badz spojny
     } else if (!m_strokeBorderTiles.isEmpty()) {
         // Inne pedzle (erase na groundzie itp.) - zbior zebrany po drodze, jak dotad.
+        m_groundNameCache.clear();
+        m_groundNameCacheOn = true;
         for (quint64 p : m_strokeBorderTiles)
             recomputeBordersAt(static_cast<int>(p >> 32), static_cast<int>(p & 0xffffffffu));
+        m_groundNameCacheOn = false;
+        m_groundNameCache.clear();
         m_strokeBorderTiles.clear();
     }
 
@@ -677,8 +685,12 @@ void MapView::paintAt(int x, int y)
     // Bordery RAZ na cale zdarzenie, na zdeduplikowanym zbiorze (patrz komentarz w
     // paintGroundBrushAt). Wczesniej liczylo sie to per-kafel-linii => O(linia x 625).
     if (!m_strokeBorderTiles.isEmpty()) {
+        m_groundNameCache.clear();
+        m_groundNameCacheOn = true;   // wspoldzielone nazwy sasiadow licza sie raz
         for (quint64 p : m_strokeBorderTiles)
             recomputeBordersAt(static_cast<int>(p >> 32), static_cast<int>(p & 0xffffffffu));
+        m_groundNameCacheOn = false;
+        m_groundNameCache.clear();
         m_strokeBorderTiles.clear();
     }
 
@@ -700,6 +712,16 @@ int MapView::groundServerIdAt(const OtbmTile *tile) const
 QString MapView::groundBrushNameAt(int x, int y) const
 {
     if (!m_brushStore) return QString();
+    // Cache aktywny tylko w przebiegu borderow (patrz mapview.h przy m_groundNameCache).
+    if (m_groundNameCacheOn) {
+        const quint64 pk = posKey(x, y);
+        auto it = m_groundNameCache.constFind(pk);
+        if (it != m_groundNameCache.cend()) return it.value();
+        const int sid = groundServerIdAt(currentFloorTileAt(x, y));
+        QString n = sid > 0 ? m_brushStore->groundBrushForServerId(sid) : QString();
+        m_groundNameCache.insert(pk, n);
+        return n;
+    }
     const int sid = groundServerIdAt(currentFloorTileAt(x, y));
     return sid > 0 ? m_brushStore->groundBrushForServerId(sid) : QString();
 }
@@ -721,13 +743,26 @@ void MapView::recomputeBordersAt(int x, int y)
     for (int i = 0; i < 8; ++i)
         neighbours << groundBrushNameAt(x + dxs[i], y + dys[i]);
 
-    QVector<int> newBorders = m_brushStore->computeBorderItems(center, neighbours);
-    // RME stack order: doBorders przetwarza od najwyzszego z-order i robi
-    // addBorderItem = insert na POCZATEK items[] (tuz nad groundem), wiec ostatni
-    // wstawiony (najnizszy z-order) laduje najnizej, a najwyzszy z-order na wierzchu
-    // stosu borderow. computeBorderItems zwraca od najwyzszego z-order -> odwracamy,
-    // by wstawiac od najnizszego (najnizej) do najwyzszego (na wierzchu).
-    std::reverse(newBorders.begin(), newBorders.end());
+    // Jednolity teren (kafel i wszyscy sasiedzi z tym samym brushem, lacznie z
+    // "wszystko puste") z definicji nie ma borderow - pomijamy computeBorderItems
+    // (QStringi + tablice przejsc). To NAJCZESTSZY przypadek przy malowaniu po
+    // wnetrzu wlasnego terenu, wiec early-out realnie tnie koszt pociagniecia.
+    // Dalsza czesc (porownanie ze starymi borderami) musi zostac: stare bordery
+    // po POPRZEDNIM terenie trzeba sprzatnac nawet gdy nowych nie ma.
+    bool uniform = true;
+    for (const QString &n : neighbours)
+        if (n != center) { uniform = false; break; }
+
+    QVector<int> newBorders;
+    if (!uniform) {
+        newBorders = m_brushStore->computeBorderItems(center, neighbours);
+        // RME stack order: doBorders przetwarza od najwyzszego z-order i robi
+        // addBorderItem = insert na POCZATEK items[] (tuz nad groundem), wiec ostatni
+        // wstawiony (najnizszy z-order) laduje najnizej, a najwyzszy z-order na wierzchu
+        // stosu borderow. computeBorderItems zwraca od najwyzszego z-order -> odwracamy,
+        // by wstawiac od najnizszego (najnizej) do najwyzszego (na wierzchu).
+        std::reverse(newBorders.begin(), newBorders.end());
+    }
 
     // "cleanBorders": obecne kafle bordera na kaflu (zarzadzane przez silnik), w
     // kolejnosci stosu - do porownania "czy cos sie zmienilo".

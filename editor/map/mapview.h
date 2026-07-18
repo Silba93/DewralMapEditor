@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
+#include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <deque>
@@ -276,6 +277,9 @@ public:
     // Instancje aktywnych efektow magicznych (animacja przy stawianiu itemu) na
     // biezacym pietrze: x,y,slotX,slotY (biezaca klatka). Usuwa skonczone efekty.
     void glCollectEffectInstances(std::vector<float> &out);
+    // Czy gra jakas animacja efektu - MapGLView renderuje wtedy ciagle (klatki
+    // animacji zmieniaja sie w czasie, bez zadnego sygnalu contentUpdated).
+    bool hasActiveEffects() const { return !m_activeEffects.empty(); }
     // Sylwet ZAZNACZONYCH itemow (wierzchni item kazdego kafelka) - do przyciemnienia.
     void glCollectSelectionInstances(std::vector<float> &out);
     // Kursor pedzla PER-KAFEL (jak RME DrawBrush): 2 floaty/kafel (world px) dla kazdego
@@ -509,7 +513,11 @@ private:
     void stopWorker();
     void workerLoop();
     void requestChunkQuads(int z, quint64 chunkKey);          // zakolejkuj do watku
-    bool takeChunkQuads(int z, quint64 chunkKey, std::vector<QuadRef> &out); // gotowe? skopiuj
+    // Gotowe quady chunka albo nullptr. Zwraca WSKAZNIK do niemutowalnego wpisu
+    // cache (pod lockiem kopiuje sie tylko shared_ptr, nie tysiace QuadRef) -
+    // wpisy sa const i nigdy nie modyfikowane w miejscu (store wstawia NOWY
+    // wektor), wiec czytanie po zwolnieniu locka jest bezpieczne.
+    std::shared_ptr<const std::vector<QuadRef>> takeChunkQuads(int z, quint64 chunkKey);
     void storeChunkQuads(int z, quint64 chunkKey, std::vector<QuadRef> &&q); // wpis do cache
     void invalidateChunkQuads(int z, quint64 chunkKey);       // po edycji jednego chunka
     // Zaznaczenie tintowane W GLOWNYM przebiegu (jak RME) - nie osobna warstwa. Po
@@ -647,7 +655,9 @@ private:
     // m_quadMutex chroni cache gotowych quadow (worker pisze, render czyta).
     std::recursive_mutex m_dataMutex;
     std::mutex m_quadMutex;
-    QHash<int, QHash<quint64, std::vector<QuadRef>>> m_quadCache; // (z,chunk) -> quady
+    // (z,chunk) -> quady. Wpisy przez shared_ptr<const...>: konsumenci (render)
+    // biora wskaznik pod lockiem i iteruja PO zwolnieniu - zero kopii wektorow.
+    QHash<int, QHash<quint64, std::shared_ptr<const std::vector<QuadRef>>>> m_quadCache;
     // Wersja tresci chunka (rosnie przy kazdym storeChunkQuads). Renderer trzyma VBO
     // per chunk i przebudowuje tylko gdy wersja sie zmieni. Spojna z m_quadCache
     // (klucz istnieje <=> quady w cache). Chroniona m_quadMutex.
@@ -792,6 +802,15 @@ private:
     // 64-bit jest tanszy i bez alokacji per wpis.
     QSet<quint64> m_strokePlaced;       // kafle juz obsluzone w pociagnieciu
     QSet<quint64> m_strokeBorderTiles;  // bordery do przeliczenia (raz/zdarzenie)
+    // Cache nazwy ground brusha per kafel, aktywny TYLKO na czas przebiegu borderow
+    // (paintAt/drawDragRect). recomputeBordersAt pyta o 9 nazw per kafel, a sasiednie
+    // kafle bordera dziela sasiadow - bez cache te same nazwy (lookup kafla + hash
+    // serverId->QString + kopia QString) liczyly sie ~9x kazda w jednym zdarzeniu
+    // myszy, co przy szybkim ciagnieciu duzym pedzlem dawalo widoczna scinke.
+    // Cache jest POPRAWNY przez caly przebieg: recomputeBordersAt zmienia wylacznie
+    // itemy borderow (nie ground), wiec nazwy brushy kafli sie nie zmieniaja.
+    mutable QHash<quint64, QString> m_groundNameCache;
+    mutable bool m_groundNameCacheOn = false;
     bool m_selectionMode = true;    // tryb zaznaczania (RME domyslnie SELECTION_MODE); wybor pedzla -> drawing
     quint32 m_activeZone = 0;       // aktywny pedzel strefy (flaga OTBM); 0 = brak
     bool m_eraseMode = false;       // trwaly tryb gumki (przycisk "Erase") - itemy i strefy

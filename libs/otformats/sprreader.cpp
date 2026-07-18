@@ -81,6 +81,13 @@ bool SpriteData::decode(const QByteArray &fileData, uint32_t offset, int spriteS
     const int totalPixels = spriteSize * spriteSize;
     int pixelIndex = 0;
 
+    // Zapis BEZPOSREDNIO do bufora obrazu. Format_RGBA8888 = 4 bajty/piksel w
+    // kolejnosci R,G,B,A, wiersze ciagle co bytesPerLine. setPixelColor robil
+    // per piksel konstrukcje QColor + konwersje + bounds-check - przy dekodowaniu
+    // tysiecy sprite'ow podczas budowy atlasu to byla najgoretsza petla wczytywania.
+    uchar *dst = image.bits();
+    const qsizetype stride = image.bytesPerLine();
+
     while (pos + 4 <= dataEnd && pixelIndex < totalPixels) {
         uint16_t transparentCount = static_cast<uint16_t>(raw[pos]) | (static_cast<uint16_t>(raw[pos + 1]) << 8);
         pos += 2;
@@ -94,15 +101,14 @@ bool SpriteData::decode(const QByteArray &fileData, uint32_t offset, int spriteS
         for (int i = 0; i < coloredCount && pixelIndex < totalPixels; ++i) {
             if (pos + bpp > dataEnd) break;
 
-            uchar r = raw[pos];
-            uchar g = raw[pos + 1];
-            uchar b = raw[pos + 2];
-            uchar a = useAlpha ? raw[pos + 3] : 255;
+            const int x = pixelIndex % spriteSize;
+            const int y = pixelIndex / spriteSize;
+            uchar *px = dst + static_cast<qsizetype>(y) * stride + static_cast<qsizetype>(x) * 4;
+            px[0] = raw[pos];                       // R
+            px[1] = raw[pos + 1];                   // G
+            px[2] = raw[pos + 2];                   // B
+            px[3] = useAlpha ? raw[pos + 3] : 255;  // A
             pos += bpp;
-
-            int x = pixelIndex % spriteSize;
-            int y = pixelIndex / spriteSize;
-            image.setPixelColor(x, y, QColor(r, g, b, a));
 
             ++pixelIndex;
         }
@@ -256,6 +262,8 @@ std::shared_ptr<SpriteData> SprReader::loadSprite(uint32_t spriteId)
     uint32_t offset = m_offsets.at(static_cast<int>(spriteId) - 1);
     sprite->decode(m_fileData, offset, kDefaultSpriteSize, m_useAlpha);
 
+    // Limit cache'u (patrz naglowek): pelne czyszczenie po przekroczeniu.
+    if (m_cache.size() >= kMaxSpriteCache) m_cache.clear();
     m_cache.insert(spriteId, sprite);
     return sprite;
 }
@@ -275,6 +283,7 @@ QString SprReader::spriteImageSource(int spriteId)
 
     QImage img = spriteImage(spriteId);
     QString dataUrl = imageToDataUrl(img);
+    if (m_dataUrlCache.size() >= kMaxDataUrlCache) m_dataUrlCache.clear();
     m_dataUrlCache.insert(spriteId, dataUrl);
     return dataUrl;
 }
@@ -334,6 +343,7 @@ QString SprReader::itemImageSource(const QVariantList &spriteIds,
     painter.end();
 
     const QString dataUrl = imageToDataUrl(composite);
+    if (m_itemDataUrlCache.size() >= kMaxDataUrlCache) m_itemDataUrlCache.clear();
     m_itemDataUrlCache.insert(key, dataUrl);
     return dataUrl;
 }

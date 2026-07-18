@@ -797,7 +797,13 @@ MapGLView::MapGLView(QQuickItem *parent)
     m_fpsTimer.start();
 
     m_renderTimer.setTimerType(Qt::PreciseTimer);
-    connect(&m_renderTimer, &QTimer::timeout, this, [this] { if (isVisible()) update(); });
+    // Render tylko gdy cos sie zmienilo (dirty) albo gra animacja efektu -
+    // bezwarunkowy update() co tick mielil CPU/GPU na identycznych klatkach idle.
+    connect(&m_renderTimer, &QTimer::timeout, this, [this] {
+        if (!isVisible()) return;
+        const bool animating = m_source && m_source->hasActiveEffects();
+        if (m_framePending || animating) { m_framePending = false; update(); }
+    });
 }
 
 QQuickFramebufferObject::Renderer *MapGLView::createRenderer() const
@@ -816,7 +822,14 @@ void MapGLView::setSource(MapView *s)
         // update(). MapView::update() jest no-opem (ItemHasContents=false), wiec bez
         // tego sygnalu chunki czekaly na przypadkowa interakcje ("itemy pojawiaja
         // sie dopiero jak klikam"). update() jest watkowo-bezpieczne (kolejkowane).
-        connect(m_source, &MapView::contentUpdated, this, [this] { update(); });
+        // Z LIMITEM FPS klatki pompuje WYLACZNIE m_renderTimer - bezposredni update()
+        // per sygnal przebijal limit przy malowaniu (kazdy ruch myszy/edycja = extra
+        // klatka: realnie ~700 fps przy ustawionych 240). Timer i tak podniesie
+        // zmiane na najblizszym ticku (max ~4 ms opoznienia przy 240).
+        connect(m_source, &MapView::contentUpdated, this, [this] {
+            m_framePending = true;          // sterowniki klatek wyrenderuja przy nastepnej okazji
+            if (m_maxFps <= 0) update();    // bez limitu: od razu (afterAnimating podtrzyma)
+        });
     }
     emit sourceChanged();
     update();
@@ -847,8 +860,14 @@ void MapGLView::updateRenderDriver()
     if (!window()) return;
 
     if (m_maxFps <= 0) {
-        m_frameConn = connect(window(), &QQuickWindow::afterAnimating,
-                              this, [this] { if (isVisible()) update(); });
+        // Bez limitu tez dirty-gating: afterAnimating podtrzymuje petle renderu
+        // tylko dopoki cos sie dzieje (pending/efekty); potem okno idzie spac,
+        // a nastepny contentUpdated budzi je bezposrednim update().
+        m_frameConn = connect(window(), &QQuickWindow::afterAnimating, this, [this] {
+            if (!isVisible()) return;
+            const bool animating = m_source && m_source->hasActiveEffects();
+            if (m_framePending || animating) { m_framePending = false; update(); }
+        });
     } else {
         m_renderTimer.setInterval(qMax(1, 1000 / m_maxFps));
         m_renderTimer.start();

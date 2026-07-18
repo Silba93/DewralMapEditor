@@ -38,20 +38,20 @@ quint32 MapView::glCollectChunkInstances(int z, quint64 key, bool groundOnly,
     out.clear();
     if (!m_otb || !m_dat || m_atlasImage.isNull()) return kChunkEmpty;
 
-    std::vector<QuadRef> quads;
+    std::shared_ptr<const std::vector<QuadRef>> quads;
     quint32 ver = kChunkEmpty;
     {
         std::lock_guard<std::mutex> lk(m_quadMutex);
         auto zit = m_quadCache.find(z);
         if (zit == m_quadCache.end() || !zit->contains(key)) return kChunkPending;
-        quads = zit->value(key);                // kopia pod lockiem
+        quads = zit->value(key);                // kopia WSKAZNIKA (nie wektora)
         ver = m_chunkVer[z].value(key, 1);
     }
     // 6 floatow/instancje: x,y,slotX,slotY,selected,zoneFlags. Klucz selekcji niesie
     // pietro (selKey), wiec tint dziala na KAZDYM pietrze i ten sam x,y na innym
     // pietrze nie tintuje sie falszywie.
-    out.reserve(quads.size() * 6);
-    for (const QuadRef &q : quads) {
+    out.reserve(quads->size() * 6);
+    for (const QuadRef &q : *quads) {
         if (groundOnly && !q.ground) continue;  // LOD: przy oddaleniu tylko podloga
         const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
         // Region (Shift+drag) tintuje CALY stos; pojedynczy grab tylko wierzchni item
@@ -552,9 +552,9 @@ void MapView::glCollectFloorInstances(int z, int cMinX, int cMinY, int cMaxX, in
         for (int cx = cMinX; cx <= cMaxX; ++cx) {
             const quint64 key = chunkKey(cx, cy);
             if (!ztiles->contains(key)) continue;
-            std::vector<QuadRef> quads;
-            if (!takeChunkQuads(z, key, quads)) { requestChunkQuads(z, key); complete = false; continue; }
-            for (const QuadRef &q : quads) {
+            const auto quads = takeChunkQuads(z, key);
+            if (!quads) { requestChunkQuads(z, key); complete = false; continue; }
+            for (const QuadRef &q : *quads) {
                 if (groundOnly && !q.ground) continue;   // LOD: przy oddaleniu tylko podloga
                 const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
                 out.push_back(static_cast<float>(q.worldX));

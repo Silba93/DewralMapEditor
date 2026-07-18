@@ -301,22 +301,23 @@ void MapView::requestChunkQuads(int z, quint64 key)
     m_reqCv.notify_one();
 }
 
-bool MapView::takeChunkQuads(int z, quint64 key, std::vector<QuadRef> &out)
+std::shared_ptr<const std::vector<MapView::QuadRef>> MapView::takeChunkQuads(int z, quint64 key)
 {
     std::lock_guard<std::mutex> lk(m_quadMutex);
     auto zit = m_quadCache.find(z);
-    if (zit == m_quadCache.end()) return false;
+    if (zit == m_quadCache.end()) return nullptr;
     auto it = zit->find(key);
-    if (it == zit->end()) return false;
-    out = it.value();   // kopia (cache trzymamy do ew. przebudowy po eksmisji)
-    return true;
+    if (it == zit->end()) return nullptr;
+    return it.value();   // kopia WSKAZNIKA (wpis niemutowalny - patrz naglowek)
 }
 
 void MapView::storeChunkQuads(int z, quint64 key, std::vector<QuadRef> &&q)
 {
     {
         std::lock_guard<std::mutex> lk(m_quadMutex);
-        m_quadCache[z][key] = std::move(q);
+        // NOWY wektor (nie modyfikacja w miejscu): czytelnicy trzymajacy stary
+        // shared_ptr dokanczaja iteracje na starych danych - bez wyscigu.
+        m_quadCache[z][key] = std::make_shared<const std::vector<QuadRef>>(std::move(q));
         quint32 &v = m_chunkVer[z][key];   // wersja tresci: 1,2,3... (0 zarezerwowane)
         v = (v == 0 || v == kChunkPending) ? 1 : v + 1;
     }

@@ -52,6 +52,11 @@ private:
     std::atomic<int> m_frameCount{0};
     int m_fps = 0;
     int m_maxFps = 0;            // 0 = bez limitu
+    // Dirty flag: czy TRESC zmienila sie od ostatnio wyrenderowanej klatki.
+    // Sterowniki klatek (timer / afterAnimating) renderuja TYLKO gdy ustawiona
+    // (albo gdy gra animacja efektu) - bez tego renderer mielil identyczne
+    // klatki non stop (przy limicie 240 = 240 pustych przebiegow GPU/s idle).
+    bool m_framePending = true;
     QTimer m_fpsTimer;
     QTimer m_renderTimer;        // pompuje update() przy limicie FPS
 };

@@ -123,6 +123,17 @@ signals:
 private:
     static constexpr int kDefaultSpriteSize = 32; // 7.72: sprite'y zawsze 32x32
 
+    // Limity cache'ow - bez nich rosly bez ograniczen przez caly czas zycia
+    // aplikacji (kazdy obejrzany sprite/item zostawal w pamieci na zawsze; przy
+    // duzym kliencie i dlugiej sesji setki MB). Strategia: po przekroczeniu
+    // limitu cache jest CZYSZCZONY w calosci - prosciej niz LRU, a wystarcza:
+    // dekodowanie jest leniwe i tanie (po fixie decode()), wiec ponowne zapelnienie
+    // biezaco uzywanych wpisow jest niezauwazalne.
+    //  - sprite'y: 4 KB kazdy (32x32 RGBA) -> 16384 = ~64 MB max
+    //  - data-URLe (PNG base64 dla QML palet): mniejsze, ale tez ograniczamy
+    static constexpr int kMaxSpriteCache = 16384;
+    static constexpr int kMaxDataUrlCache = 8192;
+
     void setError(const QString &message);
     void reset();
 
