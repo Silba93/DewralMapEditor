@@ -116,25 +116,68 @@ Window {
                             spacing: 6
                             TibiaComboBox {
                                 id: verCombo
-                                width: 110; height: 23
-                                model: app.knownVersions.map(function(v) { return app.versionLabel(v) })
+                                width: 150; height: 23
+                                // Wersje bazowe + profile custom (osobne pozycje na koncu).
+                                // allProfileKeys() czyta customProfiles, wiec dodanie
+                                // profilu odswieza model automatycznie.
+                                model: app.allProfileKeys().map(function(k) { return app.profileLabel(k) })
                                 currentIndex: 0
+                                readonly property string selKey: {
+                                    var keys = app.allProfileKeys()
+                                    return currentIndex >= 0 && currentIndex < keys.length
+                                           ? keys[currentIndex] : "772"
+                                }
                             }
                             TibiaButton {
-                                width: 116; height: 23
-                                text: "Set folder…"
+                                width: 76; height: 23
+                                text: "Folder…"
                                 onClicked: {
-                                    app.pendingVersion = app.knownVersions[verCombo.currentIndex]
+                                    app.pendingKey = verCombo.selKey
                                     app.pendingMapPath = ""
                                     versionFolderDialogStartup.open()
                                 }
                             }
                         }
 
+                        // Profil CUSTOM: osobna pozycja listy (np. "Midhem (10.98)") z
+                        // wlasnym folderem klienta i wlasnym data/<Nazwa>/. Baza = profil
+                        // aktualnie wybrany w combo.
+                        Row {
+                            spacing: 6
+                            TibiaTextField {
+                                id: newProfileField
+                                width: 150; height: 23
+                                placeholderText: "np. Midhem"
+                            }
+                            TibiaButton {
+                                width: 76; height: 23
+                                text: "+ Custom"
+                                onClicked: {
+                                    var base = app.profileVer(verCombo.selKey)
+                                    var name = newProfileField.text.trim()
+                                    if (app.addCustomProfile(name, base)) {
+                                        newProfileField.text = ""
+                                        // Przeskocz na swiezo dodany profil (ostatnia pozycja).
+                                        verCombo.currentIndex = app.allProfileKeys().indexOf(name)
+                                    }
+                                }
+                            }
+                        }
+                        // Usuwanie profilu custom (tylko custom - bazowych nie ruszamy).
+                        TibiaButton {
+                            visible: app.isCustomKey(verCombo.selKey)
+                            width: 232; height: 21
+                            text: "Usun profil " + verCombo.selKey
+                            onClicked: {
+                                app.removeCustomProfile(verCombo.selKey)
+                                verCombo.currentIndex = 0
+                            }
+                        }
+
                         // Status folderu wybranej wersji
                         Column {
                             spacing: 2
-                            property string selFolder: app.clientPaths[String(app.knownVersions[verCombo.currentIndex])] || ""
+                            property string selFolder: app.clientPaths[verCombo.selKey] || ""
                             property var selFiles: app.clientFiles(selFolder)
                             Text {
                                 width: 232; elide: Text.ElideMiddle
@@ -154,9 +197,15 @@ Window {
                             Text {
                                 width: 232; wrapMode: Text.WordWrap
                                 text: {
-                                    var keys = Object.keys(app.clientPaths).sort(function(a,b){ return Number(a)-Number(b) })
+                                    // Bazowe rosnaco, customy na koncu (jak w combo).
+                                    var keys = Object.keys(app.clientPaths).sort(function(a, b) {
+                                        var na = Number(a), nb = Number(b)
+                                        var ca = isNaN(na), cb = isNaN(nb)
+                                        if (ca !== cb) return ca ? 1 : -1
+                                        return ca ? a.localeCompare(b) : na - nb
+                                    })
                                     if (keys.length === 0) return "No versions configured yet."
-                                    return "Configured: " + keys.map(function(k){ return app.versionLabel(Number(k)) }).join(", ")
+                                    return "Configured: " + keys.map(function(k){ return app.profileLabel(k) }).join(", ")
                                 }
                                 color: "#7a9a7a"; font.pixelSize: 10
                             }
@@ -234,7 +283,7 @@ Window {
         // Dialogi loadera - wewnatrz okna loadera, by mialy poprawnego rodzica.
         FolderDialog {
             id: versionFolderDialogStartup
-            title: "Wskaz folder klienta " + app.versionLabel(app.pendingVersion)
+            title: "Wskaz folder klienta " + app.profileLabel(app.pendingKey)
                    + " (Tibia.dat / Tibia.spr / items.otb)"
             onAccepted: app.onVersionFolderPicked(selectedFolder)
         }

@@ -1166,6 +1166,82 @@ bool OtbmReader::setTopItemCount(int x, int y, int z, uint16_t count)
     return true;
 }
 
+// Wspolny szkielet setterow atrybutow wierzchniego itemu: znajdz kafel, wez
+// wierzchni item, zapisz snapshot undo i zastosuj mutacje. Zwraca false gdy nie
+// ma czego edytowac albo gdy mutacja nic nie zmienila (nie smiecimy undo).
+// mut() dostaje item i zwraca true, jesli faktycznie cos zmienil.
+template <typename Mut>
+bool OtbmReader::mutateTopItem(int x, int y, int z, Mut mut)
+{
+    auto it = m_posIndex.find(posKey3d(x, y, z));
+    if (it == m_posIndex.end()) return false;
+    OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
+    if (tile.items.empty()) return false;
+
+    // Sprawdzamy na KOPII, czy mutacja cokolwiek zmieni - inaczej kazde otwarcie
+    // okna Properties z niezmienionym polem wrzucaloby pusty wpis na stos undo.
+    OtbmMapItem probe = tile.items.back();
+    if (!mut(probe)) return false;
+
+    recordTile(x, y, z);   // undo: stan przed zmiana
+    mut(tile.items.back());
+    if (!m_undoGrouping) emit mapChanged();
+    return true;
+}
+
+bool OtbmReader::setTopItemActionId(int x, int y, int z, uint16_t actionId)
+{
+    return mutateTopItem(x, y, z, [actionId](OtbmMapItem &i) {
+        if (i.action_id == actionId) return false;
+        i.action_id = actionId;
+        return true;
+    });
+}
+
+bool OtbmReader::setTopItemUniqueId(int x, int y, int z, uint16_t uniqueId)
+{
+    return mutateTopItem(x, y, z, [uniqueId](OtbmMapItem &i) {
+        if (i.unique_id == uniqueId) return false;
+        i.unique_id = uniqueId;
+        return true;
+    });
+}
+
+bool OtbmReader::setTopItemText(int x, int y, int z, const QString &text)
+{
+    return mutateTopItem(x, y, z, [&text](OtbmMapItem &i) {
+        const QString cur = i.extra ? i.extra->text : QString();
+        if (cur == text) return false;
+        // Pusty tekst na itemie bez innych atrybutow: nie alokuj extra po nic.
+        if (text.isEmpty() && !i.extra) return false;
+        i.ensureExtra().text = text;
+        return true;
+    });
+}
+
+bool OtbmReader::setTopItemTeleport(int x, int y, int z, int destX, int destY, int destZ)
+{
+    const bool clear = destX < 0 || destY < 0 || destZ < 0 || destZ > 15;
+    return mutateTopItem(x, y, z, [clear, destX, destY, destZ](OtbmMapItem &i) {
+        const bool had = i.extra && i.extra->has_teleport;
+        if (clear) {
+            if (!had) return false;
+            i.extra->has_teleport = false;
+            i.extra->tele_x = i.extra->tele_y = 0;
+            i.extra->tele_z = 0;
+            return true;
+        }
+        if (had && i.extra->tele_x == destX && i.extra->tele_y == destY
+            && i.extra->tele_z == destZ) return false;
+        OtbmItemExtra &e = i.ensureExtra();
+        e.has_teleport = true;
+        e.tele_x = static_cast<uint16_t>(destX);
+        e.tele_y = static_cast<uint16_t>(destY);
+        e.tele_z = static_cast<uint8_t>(destZ);
+        return true;
+    });
+}
+
 int OtbmReader::countItemsOnTile(int x, int y, int z, int serverId) const
 {
     if (serverId <= 0) return 0;

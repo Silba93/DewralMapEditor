@@ -33,6 +33,10 @@ public:
     // (addItem/newTileset/...) zapisuja sie z powrotem do tego samego pliku.
     // false = plik nie istnieje/pusty (mozna i tak zaczac dopisywac od zera).
     Q_INVOKABLE bool loadForVersion(int clientVersion);
+    // Jak wyzej, ale z data/<dirName>/ (profile z nazwa wlasna). UWAGA: mutacje
+    // tilesetow zapisuja sie do TEGO SAMEGO pliku (m_path) - dla nazwanego profilu
+    // wlasne palety laduja wiec w data/<Nazwa>/tilesets.json, nie w bazie wersji.
+    Q_INVOKABLE bool loadForDir(const QString &dirName);
     Q_INVOKABLE void clear();
 
     // Nazwy tilesetow majacych zawartosc w danej kategorii ("terrain"/"doodad"/"item"/"raw").

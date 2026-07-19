@@ -1,5 +1,7 @@
 #include "tilesetstore.h"
 
+#include "dmedatadir.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -83,9 +85,13 @@ void TilesetStore::saveJson() const
 
 bool TilesetStore::loadForVersion(int clientVersion)
 {
+    return loadForDir(QString::number(clientVersion));
+}
+
+bool TilesetStore::loadForDir(const QString &dirName)
+{
     clear();
-    m_path = QDir(QCoreApplication::applicationDirPath())
-                 .filePath(QStringLiteral("data/%1/tilesets.json").arg(clientVersion));
+    m_path = QDir(dmeDataDir()).filePath(QStringLiteral("%1/tilesets.json").arg(dirName));
     const bool has = loadJsonInto(m_path, m_names, m_items);
     bump();
     return has;

@@ -3,92 +3,184 @@ import QtQuick.Controls
 import "../style"
 
 // Wlasciwosci itemu (PPM na mapie > Properties).
+//
+// CALA tresc (naglowek, pola, przyciski) siedzi w JEDNYM TibiaPanel - tym samym
+// co pod lista miast w Towns. Podpisy sekcji w stylu Towns ("Name / ID": szare,
+// 11px). Zadnych dodatkowych ramek/prostokatow.
+//
+// Model zapisu jak w RME: pola sa BUFOREM, nic nie idzie na mape do klikniecia OK,
+// a caly komplet laduje w JEDNEJ grupie undo (applyContextItemProperties).
 TibiaDialog {
     id: propsDialog
-    // Dane kliknietego kafelka/itemu: { name, serverId, clientId, x, y, z, ... }.
     required property var ctx
-    // Kontroler mapy - potrzebny do zapisu count. Bez niego dialog jest tylko do odczytu.
     property var mapCtrl: null
 
-    title: "Item properties"
+    title: "Item Properties"
+    width: 340
 
-    contentItem: Column {
-        spacing: 4
-        Text { text: "Name: " + (propsDialog.ctx.name && propsDialog.ctx.name.length ? propsDialog.ctx.name : "(unnamed)"); color: "#c0c0c0"; font.pixelSize: 13; font.bold: true }
-        Text { text: "Server Id: " + propsDialog.ctx.serverId; color: "#999"; font.pixelSize: 12 }
-        Text { text: "Client Id: " + propsDialog.ctx.clientId; color: "#999"; font.pixelSize: 12 }
-        Text { text: "Position: " + propsDialog.ctx.x + ", " + propsDialog.ctx.y + ", " + propsDialog.ctx.z; color: "#999"; font.pixelSize: 12 }
-        // Count tylko dla stackowalnych - dla reszty OTBM trzyma 1 i wartosc nic nie znaczy.
-        // Zmiana od razu przebudowuje sprite (count wybiera wariant sterty) i idzie na undo.
-        Row {
-            spacing: 6
-            visible: propsDialog.ctx.stackable === true
-            Text {
-                text: "Count"
-                color: "#ccc"; font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            TibiaSpinBox {
-                id: countField
-                width: 80
-                from: 1
-                to: 100      // limit sterty w Tibii; wyzej i tak nie ma wariantu sprite'a
-                value: propsDialog.ctx.count > 0 ? propsDialog.ctx.count : 1
-                onValueModified: if (propsDialog.mapCtrl) propsDialog.mapCtrl.setContextItemCount(value)
-            }
-        }
-        Text {
-            visible: propsDialog.ctx.actionId > 0
-            text: "Action Id: " + propsDialog.ctx.actionId
-            color: "#999"; font.pixelSize: 12
-        }
-        Text {
-            visible: propsDialog.ctx.uniqueId > 0
-            text: "Unique Id: " + propsDialog.ctx.uniqueId
-            color: "#999"; font.pixelSize: 12
-        }
+    readonly property bool isTeleport: ctx.teleport === true
+    readonly property bool isWritable: ctx.writable === true
+    readonly property bool hasCreature: ctx.creatureName !== undefined && ctx.creatureName !== ""
+    readonly property bool hasSpawn: ctx.spawnRadius !== undefined && ctx.spawnRadius > 0
 
-        // Potwor na kaflu: nazwa + edytowalny spawntime (jak RME).
-        Text {
-            visible: propsDialog.ctx.creatureName !== undefined && propsDialog.ctx.creatureName !== ""
-            text: "Creature: " + propsDialog.ctx.creatureName
-            color: "#c0c0c0"; font.pixelSize: 12; font.bold: true
-        }
-        Row {
-            spacing: 6
-            visible: propsDialog.ctx.creatureName !== undefined && propsDialog.ctx.creatureName !== ""
-            Text {
-                text: "Spawntime"
-                color: "#999"; font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            TibiaSpinBox {
-                width: 80; from: 1; to: 86400
-                value: propsDialog.ctx.creatureSpawntime > 0 ? propsDialog.ctx.creatureSpawntime : 60
-                onValueModified: if (propsDialog.mapCtrl) propsDialog.mapCtrl.setContextCreatureSpawntime(value)
-            }
-        }
-        // Centrum spawnu: promien edytowalny (jak spawntime).
-        Row {
-            spacing: 6
-            visible: propsDialog.ctx.spawnRadius !== undefined && propsDialog.ctx.spawnRadius > 0
-            Text {
-                text: "Spawn radius"
-                color: "#999"; font.pixelSize: 12
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            TibiaSpinBox {
-                width: 80; from: 1; to: 15
-                value: propsDialog.ctx.spawnRadius > 0 ? propsDialog.ctx.spawnRadius : 1
-                onValueModified: if (propsDialog.mapCtrl) propsDialog.mapCtrl.setContextSpawnRadius(value)
-            }
-        }
+    // Pola sa edytowane lokalnie; binding na ctx pekłby po pierwszej edycji, wiec
+    // przy KAZDYM otwarciu przepisujemy wartosci z ctx imperatywnie.
+    onOpened: resetFields()
 
-        TibiaButton {
-            text: "Zamknij"
-            width: 90
-            anchors.horizontalCenter: parent.horizontalCenter
-            onClicked: propsDialog.close()
+    function resetFields() {
+        countField.value = ctx.count > 0 ? ctx.count : 1
+        aidField.value   = ctx.actionId > 0 ? ctx.actionId : 0
+        uidField.value   = ctx.uniqueId > 0 ? ctx.uniqueId : 0
+        textField.text   = ctx.text !== undefined ? ctx.text : ""
+        teleX.value      = ctx.teleportX > 0 ? ctx.teleportX : 0
+        teleY.value      = ctx.teleportY > 0 ? ctx.teleportY : 0
+        teleZ.value      = ctx.teleportZ > 0 ? ctx.teleportZ : 0
+        spawntimeField.value = ctx.creatureSpawntime > 0 ? ctx.creatureSpawntime : 60
+        radiusField.value    = ctx.spawnRadius > 0 ? ctx.spawnRadius : 1
+    }
+
+    function applyAndClose() {
+        if (mapCtrl && ctx.hasItem === true) {
+            var p = {
+                "actionId": aidField.value,
+                "uniqueId": uidField.value,
+                "count": countField.value
+            }
+            if (isWritable) p["text"] = textField.text
+            if (isTeleport) {
+                // 0,0,0 = brak celu -> kasujemy atrybut, zeby teleport bez celu nie
+                // dostawal smieciowego wpisu (0,0,0) w pliku.
+                if (teleX.value === 0 && teleY.value === 0 && teleZ.value === 0)
+                    p["teleportClear"] = true
+                else {
+                    p["teleportX"] = teleX.value
+                    p["teleportY"] = teleY.value
+                    p["teleportZ"] = teleZ.value
+                }
+            }
+            mapCtrl.applyContextItemProperties(p)
+        }
+        // Potwor/spawn to osobne obiekty kafla, nie atrybuty itemu - wlasne settery.
+        if (mapCtrl && hasCreature) mapCtrl.setContextCreatureSpawntime(spawntimeField.value)
+        if (mapCtrl && hasSpawn)    mapCtrl.setContextSpawnRadius(radiusField.value)
+        propsDialog.close()
+    }
+
+    // BEZ wewnetrznego TibiaPanel: tlo dialogu (popupwindow.png) JUZ jest kamiennym
+    // panelem, a kazdy panel-w-panelu rysuje wlasny bevel i szew odcieni - "jednej
+    // plyty" nie da sie tak osiagnac. Tresc lezy wprost na tle okna = zero szwow.
+    contentItem: Item {
+        implicitWidth: 316               // width(340) - padding dialogu (2*12)
+        implicitHeight: body.implicitHeight + 8
+
+        Column {
+            id: body
+            x: 4
+            y: 4
+            width: parent.width - 8
+            spacing: 6
+
+            // --- Naglowek itemu ---
+            Row {
+                spacing: 8
+                Text {
+                    text: "ID " + propsDialog.ctx.serverId
+                    color: "#c0c0c0"; font.pixelSize: 13; font.bold: true
+                }
+                Text {
+                    text: propsDialog.ctx.name && propsDialog.ctx.name.length
+                          ? propsDialog.ctx.name : "(bez nazwy)"
+                    color: "#999"; font.pixelSize: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            Text {
+                text: "Client Id " + propsDialog.ctx.clientId + "   -   "
+                      + propsDialog.ctx.x + ", " + propsDialog.ctx.y + ", " + propsDialog.ctx.z
+                color: "#777"; font.pixelSize: 10
+            }
+
+            Item { width: 1; height: 4 }   // odstep naglowek/pola
+
+            // --- Count ---
+            Text {
+                visible: propsDialog.ctx.hasItem === true
+                text: "Count"; color: "#999"; font.pixelSize: 11
+            }
+            Row {
+                visible: propsDialog.ctx.hasItem === true
+                TibiaSpinBox {
+                    id: countField
+                    width: 100; from: 1; to: 100
+                    enabled: propsDialog.ctx.stackable === true
+                    editable: propsDialog.ctx.stackable === true
+                    opacity: enabled ? 1.0 : 0.45
+                }
+            }
+
+            // --- Action / Unique ID ---
+            Text {
+                visible: propsDialog.ctx.hasItem === true
+                text: "Action ID / Unique ID"; color: "#999"; font.pixelSize: 11
+            }
+            Row {
+                spacing: 6
+                visible: propsDialog.ctx.hasItem === true
+                TibiaSpinBox { id: aidField; width: 145; from: 0; to: 65535 }
+                TibiaSpinBox { id: uidField; width: 145; from: 0; to: 65535 }
+            }
+
+            // --- Destination (tylko teleport wg items.otb / items.xml) ---
+            Text {
+                visible: propsDialog.isTeleport
+                text: "Destination"; color: "#999"; font.pixelSize: 11
+            }
+            Row {
+                spacing: 6
+                visible: propsDialog.isTeleport
+                TibiaSpinBox { id: teleX; width: 100; from: 0; to: 65535 }
+                TibiaSpinBox { id: teleY; width: 100; from: 0; to: 65535 }
+                TibiaSpinBox { id: teleZ; width: 84; from: 0; to: 15 }
+            }
+
+            // --- Text (tylko itemy zapisywalne) ---
+            Text {
+                visible: propsDialog.isWritable
+                text: "Text"; color: "#999"; font.pixelSize: 11
+            }
+            Row {
+                visible: propsDialog.isWritable
+                TibiaTextField { id: textField; width: 296 }
+            }
+
+            // --- Potwor / spawn na kaflu ---
+            Text {
+                visible: propsDialog.hasCreature
+                text: "Spawntime (" + (propsDialog.ctx.creatureName || "") + ")"
+                color: "#999"; font.pixelSize: 11
+            }
+            Row {
+                visible: propsDialog.hasCreature
+                TibiaSpinBox { id: spawntimeField; width: 100; from: 1; to: 86400 }
+            }
+            Text {
+                visible: propsDialog.hasSpawn
+                text: "Spawn radius"; color: "#999"; font.pixelSize: 11
+            }
+            Row {
+                visible: propsDialog.hasSpawn
+                TibiaSpinBox { id: radiusField; width: 100; from: 1; to: 15 }
+            }
+
+            Item { width: 1; height: 4 }   // odstep pola/przyciski
+
+            // --- OK / Anuluj (w tym samym panelu) ---
+            Row {
+                spacing: 6
+                anchors.horizontalCenter: parent.horizontalCenter
+                TibiaButton { text: "OK";     width: 90; onClicked: propsDialog.applyAndClose() }
+                TibiaButton { text: "Anuluj"; width: 90; onClicked: propsDialog.close() }
+            }
         }
     }
 }

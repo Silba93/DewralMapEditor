@@ -11,17 +11,25 @@ TibiaDialog {
 
     title: "New Map"
 
-    // Wersje do wyboru: skonfigurowane foldery klienta + typowe stare ery, zeby
-    // dalo sie zaczac nawet bez zadnej konfiguracji (dialog folderu otworzy sie sam).
-    property var versions: []
+    // Profile do wyboru: skonfigurowane (bazowe + custom, np. "Midhem") + typowe
+    // stare ery, zeby dalo sie zaczac nawet bez konfiguracji (dialog folderu
+    // otworzy sie sam). Klucze jak w Main.qml: "772" / "Midhem".
+    property var profileKeys: []
     onAboutToShow: {
-        var set = {}
-        for (var k in app.clientPaths) set[parseInt(k)] = true
-        set[760] = true
-        set[772] = true
-        versions = Object.keys(set).map(Number).sort(function(a, b) { return a - b })
-        var idx = versions.indexOf(app.loadedClientVersion)
-        verCombo.currentIndex = idx >= 0 ? idx : versions.length - 1
+        var keys = []
+        var seen = {}
+        function push(k) { if (!seen[k]) { seen[k] = true; keys.push(k) } }
+        push("760"); push("772")
+        Object.keys(app.clientPaths).forEach(push)
+        keys.sort(function(a, b) {
+            var na = Number(a), nb = Number(b)
+            var ca = isNaN(na), cb = isNaN(nb)
+            if (ca !== cb) return ca ? 1 : -1           // customy na koncu
+            return ca ? a.localeCompare(b) : na - nb
+        })
+        profileKeys = keys
+        var idx = profileKeys.indexOf(app.loadedClientKey)
+        verCombo.currentIndex = idx >= 0 ? idx : profileKeys.length - 1
     }
 
     contentItem: Column {
@@ -35,8 +43,8 @@ TibiaDialog {
             }
             TibiaComboBox {
                 id: verCombo
-                width: 140
-                model: root.versions.map(function(v) { return root.app.versionLabel(v) })
+                width: 160
+                model: root.profileKeys.map(function(k) { return root.app.profileLabel(k) })
             }
         }
 
@@ -60,7 +68,7 @@ TibiaDialog {
                 enabled: verCombo.currentIndex >= 0
                 onClicked: {
                     root.close()
-                    root.app.createNewMap(root.versions[verCombo.currentIndex],
+                    root.app.createNewMap(root.profileKeys[verCombo.currentIndex],
                                           wField.value, hField.value)
                 }
             }

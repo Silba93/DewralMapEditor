@@ -93,6 +93,22 @@ class MapView : public QQuickItem
     // Przelacznik "pochodnia" (topbar, ikony itemow 2058/2059). Sam stan - funkcja
     // zostanie podpieta pozniej (decyzja uzytkownika).
     Q_PROPERTY(bool torchOn READ torchOn WRITE setTorchOn NOTIFY torchChanged)
+    // Animacje itemow (RME "Show Animation", L) i okno minimapy - na razie SAM STAN
+    // (jak torchOn na poczatku): przyciski w topbarze juz sa, funkcje beda podpiete
+    // do renderera/okna minimapy w nastepnym kroku.
+    Q_PROPERTY(bool showAnimations READ showAnimations WRITE setShowAnimations NOTIFY showAnimationsChanged)
+    Q_PROPERTY(bool minimapOn READ minimapOn WRITE setMinimapOn NOTIFY minimapOnChanged)
+    // Przelaczniki warstw widoku (menu Show, jak RME): siatka kafli, potwory/NPC,
+    // markery spawnow, tint domow, tint stref (PZ/PvP/...). Wspolny sygnal NOTIFY -
+    // to niezalezne flagi, ale QML i tak tylko odswieza bindingi checkboxow.
+    Q_PROPERTY(bool showGrid READ showGrid WRITE setShowGrid NOTIFY viewFlagsChanged)
+    Q_PROPERTY(bool showCreatures READ showCreatures WRITE setShowCreatures NOTIFY viewFlagsChanged)
+    Q_PROPERTY(bool showSpawns READ showSpawns WRITE setShowSpawns NOTIFY viewFlagsChanged)
+    Q_PROPERTY(bool showHouses READ showHouses WRITE setShowHouses NOTIFY viewFlagsChanged)
+    Q_PROPERTY(bool showZones READ showZones WRITE setShowZones NOTIFY viewFlagsChanged)
+    // RME "Always show zones": strefy/domy widoczne TAKZE na pustych kaflach
+    // (plaskie kwadraty nakladki). Wylaczenie = strefy widac tylko na podlodze.
+    Q_PROPERTY(bool showZonesAlways READ showZonesAlways WRITE setShowZonesAlways NOTIFY viewFlagsChanged)
     // Tryb box-selekcji (RME Select > Selection Mode): ktore pietra zaznacza prostokat.
     // 0 = Current Floor, 1 = Lower Floors (biezace + wszystko pod, do z=15),
     // 2 = Visible Floors (dokladnie to, co widac - renderBottomFloor).
@@ -167,6 +183,56 @@ public:
         m_creatureSpawntime = s;
         emit brushChanged();
     }
+    bool showAnimations() const { return m_showAnimations; }
+    // Wlacza/wylacza animacje itemow (model RME dla klientow 7.x: WSZYSTKIE itemy
+    // tykaja synchronicznie co 500 ms z globalnego licznika klatek - patrz
+    // ITEM_FRAME_DURATION w RME graphics.h). Zmiana klatki lub przelaczenie
+    // uniewaznia cache quadow (klatka jest ZAPIECZONA w quadach przez cellSpriteId),
+    // widoczne chunki przelicza worker.
+    void setShowAnimations(bool on);
+    // Nastepna klatka animacji + inwalidacja quadow. Wola MapGLView ze SWOJEGO
+    // sterownika klatek (co >=500 ms gdy animacje wlaczone) - celowo NIE wlasny
+    // QTimer w MapView: rytm klatek jedzie na tym samym mechanizmie co render,
+    // wiec nie ma jak sie rozjechac ("animuje sie tylko przy ruchu myszy").
+    void animTick();
+    bool minimapOn() const { return m_minimapOn; }
+    void setMinimapOn(bool on) {
+        if (m_minimapOn == on) return;
+        m_minimapOn = on;
+        emit minimapOnChanged();
+    }
+
+    // --- Przelaczniki Show ---
+    // Dwa rodzaje setterow: NAKLADKOWE (grid/spawny - rysowane per klatka, wystarczy
+    // repaint) i ZAPIECZONE W QUADACH (potwory/strefy/domy - quady niosa te dane,
+    // wiec toggle musi uniewaznic cache chunkow jak tick animacji).
+    bool showGrid() const { return m_showGrid; }
+    void setShowGrid(bool on) {
+        if (m_showGrid == on) return;
+        m_showGrid = on;
+        emit viewFlagsChanged();
+        emit contentUpdated(); update();
+    }
+    bool showSpawns() const { return m_showSpawns; }
+    void setShowSpawns(bool on) {
+        if (m_showSpawns == on) return;
+        m_showSpawns = on;
+        emit viewFlagsChanged();
+        emit contentUpdated(); update();
+    }
+    bool showCreatures() const { return m_showCreatures; }
+    void setShowCreatures(bool on) { setBakedViewFlag(m_showCreatures, on); }
+    bool showHouses() const { return m_showHouses; }
+    void setShowHouses(bool on) { setBakedViewFlag(m_showHouses, on); }
+    bool showZones() const { return m_showZones; }
+    void setShowZones(bool on) { setBakedViewFlag(m_showZones, on); }
+    bool showZonesAlways() const { return m_showZonesAlways; }
+    void setShowZonesAlways(bool on) {
+        if (m_showZonesAlways == on) return;
+        m_showZonesAlways = on;                 // nakladka per klatka - repaint starczy
+        emit viewFlagsChanged();
+        emit contentUpdated(); update();
+    }
     bool torchOn() const { return m_torchOn; }
     void setTorchOn(bool on) {
         if (m_torchOn == on) return;
@@ -237,6 +303,16 @@ public:
         return std::abs(dx) <= m_brushSize && std::abs(dy) <= m_brushSize;
     }
 
+    // --- Minimapa (okno "Minimap", 1 px = 1 kafel) ---
+    // Obraz biezacego pietra w bbox jego kafli, budowany leniwie i aktualizowany
+    // PUNKTOWO po edycji (onTileEdited -> minimapUpdateTile). Kolor kafla = kolor
+    // minimapy NAJWYZSZEGO itemu z flaga minimap-color w .dat (jak RME), paleta
+    // 6x6x6 (indeks -> RGB*51). MinimapView (QQuickPaintedItem) rysuje wycinek.
+    const QImage &minimapImage();               // buduje dla m_floor gdy trzeba
+    int minimapOriginX() const { return m_minimapOX; }
+    int minimapOriginY() const { return m_minimapOY; }
+    quint32 minimapVersion() const { return m_minimapVer; }
+
     // --- API dla renderera OpenGL (MapGLView) ---
     // Wszystkie wolane z MapGLView::synchronize() (watek renderu, GUI zablokowany).
     const QImage &glAtlasImage() const { return m_atlasImage; }
@@ -300,6 +376,14 @@ public:
     }
     // Duch PRZENOSZONEGO/pedzlowanego itemu na kursorze - do polprzezroczystego podgladu.
     void glCollectGhostInstances(std::vector<float> &out);
+    // Siatka kafli (Show grid): linie jako plaskie rect-y x,y,w,h (world px), format
+    // jak markery spawnow - rysowane tym samym programem kursora, ciemnym kolorem.
+    void glCollectGridInstances(std::vector<float> &out);
+    // Kafle z flagami stref/domu ale BEZ itemow (np. dom namalowany na pustym
+    // terenie): tint quadow nie ma sie na czym zawiesic, wiec rysujemy plaskie
+    // kolorowe kwadraty (format jak spawn marks). outHouse = kafle domow (niebieski),
+    // outZone = pozostale strefy (zielony). Tylko biezace pietro, widoczny zakres.
+    void glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vector<float> &outZone);
     // Prostokat zaznaczania (Shift/Ctrl + przeciagniecie na pustym) w px (world, biezace
     // pietro): x0,y0,x1,y1. Zwraca false gdy nie trwa zaznaczanie (nic do rysowania).
     bool glRubberBandRect(double &x0, double &y0, double &x1, double &y1) const {
@@ -363,6 +447,18 @@ public:
     Q_INVOKABLE bool setContextCreatureSpawntime(int seconds);
     // Promien ISTNIEJACEGO centrum spawnu na kaflu z PPM (Properties).
     Q_INVOKABLE bool setContextSpawnRadius(int radius);
+    // Zatwierdza KOMPLET wlasciwosci wierzchniego itemu naraz (przycisk OK w oknie
+    // Properties, jak RME): calosc laduje w JEDNEJ grupie undo, wiec jedno Ctrl+Z
+    // cofa cala edycje okna, a nie kazde pole z osobna. Klucze mapy (wszystkie
+    // opcjonalne): count, actionId, uniqueId, text, teleportX/Y/Z, teleportClear.
+    Q_INVOKABLE bool applyContextItemProperties(const QVariantMap &props);
+    // Atrybuty wierzchniego itemu kafla z PPM (Properties) - jak RME. 0 / pusty
+    // tekst kasuje atrybut. Zwracaja true, gdy cos sie realnie zmienilo.
+    Q_INVOKABLE bool setContextItemActionId(int actionId);
+    Q_INVOKABLE bool setContextItemUniqueId(int uniqueId);
+    Q_INVOKABLE bool setContextItemText(const QString &text);
+    // Cel teleportu; ujemne wspolrzedne kasuja atrybut.
+    Q_INVOKABLE bool setContextItemTeleport(int destX, int destY, int destZ);
     // Usuwa wierzchni item z kazdego zaznaczonego kafelka.
     Q_INVOKABLE void deleteSelectedTop();
     // Stawia item (z poprawna kolejnoscia rysowania) na kafelku biezacego pietra.
@@ -441,6 +537,9 @@ signals:
     void selectionModeChanged();
     void selectionOptionsChanged();   // tryb box-selekcji / kompensacja pieter
     void torchChanged();              // przelacznik-pochodnia (topbar)
+    void showAnimationsChanged();     // animacje itemow (topbar)
+    void minimapOnChanged();          // okno minimapy (topbar)
+    void viewFlagsChanged();          // przelaczniki Show (grid/potwory/spawny/domy/strefy)
     void activeZoneChanged();
     void eraseModeChanged();
     void clipboardChanged();
@@ -662,6 +761,14 @@ private:
     // per chunk i przebudowuje tylko gdy wersja sie zmieni. Spojna z m_quadCache
     // (klucz istnieje <=> quady w cache). Chroniona m_quadMutex.
     QHash<int, QHash<quint64, quint32>> m_chunkVer;
+    // GLOBALNY, MONOTONICZNY licznik wersji (pod m_quadMutex). Kazde nadanie wersji
+    // = ++licznik, wersje NIGDY sie nie powtarzaja. Bez tego czyszczenie cache
+    // (clearChunkQuadCache, np. tick animacji) zerowalo per-chunkowe liczniki:
+    // swiezo policzony chunk dostawal wersje 1, IDENTYCZNA z ta, ktora renderer
+    // juz trzymal w ChunkBuf sprzed czyszczenia -> "nic sie nie zmienilo", VBO
+    // zostawal stary i nowe quady (np. kolejna klatka animacji) nigdy nie trafialy
+    // na ekran, dopoki edycja recznie nie podbila wersji tego chunka.
+    quint32 m_chunkVerCounter = 0;
     std::thread m_worker;
     std::condition_variable m_reqCv;
     std::mutex m_reqMutex;
@@ -752,6 +859,35 @@ private:
     int m_creatureSpawntime = 60;        // spawntime stawianych potworow (s)
     int m_spawnBrushRadius = 3;          // promien stawianych spawnow (kafle)
     bool m_torchOn = false;              // przelacznik OSWIETLENIA (pochodnia w topbar)
+    bool m_showAnimations = false;       // animacje itemow (globalny zegar klatek jak RME)
+    bool m_minimapOn = false;            // okno minimapy (topbar; okno podpiete pozniej)
+    // Przelaczniki Show (RME): wszystko domyslnie widoczne, siatka wylaczona.
+    bool m_showGrid = false;
+    bool m_showCreatures = true;
+    bool m_showSpawns = true;
+    bool m_showHouses = true;
+    bool m_showZones = true;
+    bool m_showZonesAlways = true;   // RME "Always show zones" (puste kafle tez)
+    // Wspolne cialo setterow flag ZAPIECZONYCH w quadach (potwory/strefy/domy):
+    // toggle musi przeliczyc quady widocznych chunkow, jak tick animacji.
+    void setBakedViewFlag(bool &flag, bool on) {
+        if (flag == on) return;
+        flag = on;
+        clearChunkQuadCache();
+        ++m_dataVersion;
+        emit viewFlagsChanged();
+        emit contentUpdated(); update();
+    }
+    // Globalny licznik klatek animacji (RME: elapsed/500 % frames - synchroniczny,
+    // wiec wszystkie ognie/wody itd. tykaja razem). Kazdy item bierze
+    // m_animFrame % frames (patrz itemFrame). Podbijany przez animTick() ze
+    // sterownika klatek MapGLView (nie wlasnym QTimerem - patrz animTick).
+    int m_animFrame = 0;
+    // Klatka animacji dla itemu: 0 gdy animacje wylaczone / item bez animacji.
+    int itemFrame(const ClientItem *ci) const {
+        const int f = std::max(1, static_cast<int>(ci->frames));
+        return (m_showAnimations && f > 1) ? (m_animFrame % f) : 0;
+    }
     // Bufor swiatel widocznego zakresu (RGBA, 1px = 1 kafel) + jego polozenie.
     std::vector<uint32_t> m_lightPixels;
     int m_lightTX = 0, m_lightTY = 0, m_lightTW = 0, m_lightTH = 0;
@@ -832,6 +968,15 @@ private:
     int m_moveSrcX = 0, m_moveSrcY = 0;
     int m_moveServerId = 0;             // server id przenoszonego itemu (duch)
     QString m_hoverText;
+
+    // --- Minimapa (cache obrazu biezacego pietra) ---
+    QImage m_minimapImg;
+    int m_minimapFloor = -1;      // pietro, dla ktorego zbudowano obraz (-1 = brak)
+    int m_minimapOX = 0, m_minimapOY = 0;   // bbox min (kafel odpowiadajacy pikselowi 0,0)
+    quint32 m_minimapVer = 0;     // ++ przy kazdej zmianie obrazu
+    void buildMinimap();          // pelny rebuild dla m_floor
+    void minimapUpdateTile(int x, int y, int z);   // punktowo po edycji
+    uint32_t minimapColorForTile(const OtbmTile *tile) const;   // 0xFFRRGGBB lub 0
 
     // Atlas (CPU): obraz + sloty. m_spriteToSlot mapuje sprite_id -> indeks slotu.
     QImage m_atlasImage;

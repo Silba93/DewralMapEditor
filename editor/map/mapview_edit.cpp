@@ -98,6 +98,9 @@ void MapView::onTileEdited(int x, int y, int z)
     // Swiatlo: usun z cache tylko chunki dotkniete tym kaflem (nie caly widok).
     // invalidateLightAround sam sprawdza czy oswietlenie w ogole wlaczone.
     invalidateLightAround(x, y, z);
+    // Minimapa: punktowa aktualizacja piksela edytowanego kafla (tania - sam
+    // sprawdza pietro i bbox).
+    minimapUpdateTile(x, y, z);
 
     // Oznacz chunk jako oczekujacy przeliczenia (NIE przeliczaj tu!). Przy duzym
     // pedzlu wiele kafelkow z rzedu trafia w TEN SAM chunk - bez batchowania
@@ -1047,6 +1050,105 @@ bool MapView::setContextItemCount(int count)
     return changed;
 }
 
+bool MapView::applyContextItemProperties(const QVariantMap &props)
+{
+    if (!m_otbm) return false;
+
+    bool changed = false;
+    bool spriteDirty = false;   // count wybiera wariant sprite'a -> chunk do przeliczenia
+    {
+        std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+        // Cala zawartosc okna = JEDNA akcja undo (jak OK w RME).
+        m_otbm->beginUndoGroup();
+
+        if (props.contains(QStringLiteral("actionId"))) {
+            const int v = std::clamp(props.value(QStringLiteral("actionId")).toInt(), 0, 65535);
+            changed |= m_otbm->setTopItemActionId(m_contextX, m_contextY, m_floor,
+                                                  static_cast<uint16_t>(v));
+        }
+        if (props.contains(QStringLiteral("uniqueId"))) {
+            const int v = std::clamp(props.value(QStringLiteral("uniqueId")).toInt(), 0, 65535);
+            changed |= m_otbm->setTopItemUniqueId(m_contextX, m_contextY, m_floor,
+                                                  static_cast<uint16_t>(v));
+        }
+        if (props.contains(QStringLiteral("text"))) {
+            changed |= m_otbm->setTopItemText(m_contextX, m_contextY, m_floor,
+                                              props.value(QStringLiteral("text")).toString());
+        }
+        if (props.value(QStringLiteral("teleportClear")).toBool()) {
+            changed |= m_otbm->setTopItemTeleport(m_contextX, m_contextY, m_floor, -1, -1, -1);
+        } else if (props.contains(QStringLiteral("teleportX"))) {
+            changed |= m_otbm->setTopItemTeleport(
+                m_contextX, m_contextY, m_floor,
+                props.value(QStringLiteral("teleportX")).toInt(),
+                props.value(QStringLiteral("teleportY")).toInt(),
+                props.value(QStringLiteral("teleportZ")).toInt());
+        }
+        if (props.contains(QStringLiteral("count"))) {
+            // Tylko stackowalne - dla reszty OTBM i tak trzyma 1 (jak w RME, gdzie
+            // pole Count jest wtedy wyszarzone).
+            const OtbmTile *t = currentFloorTileAt(m_contextX, m_contextY);
+            const int cid = (t && !t->items.empty() && m_otb)
+                                ? m_otb->clientIdForServerId(t->items.back().server_id) : 0;
+            const ClientItem *ci = (m_dat && cid > 0)
+                                       ? m_dat->itemByClientId(static_cast<uint16_t>(cid)) : nullptr;
+            if (ci && ci->is_stackable) {
+                const int v = std::clamp(props.value(QStringLiteral("count")).toInt(), 1, 100);
+                if (m_otbm->setTopItemCount(m_contextX, m_contextY, m_floor,
+                                            static_cast<uint16_t>(v))) {
+                    changed = true;
+                    spriteDirty = true;
+                }
+            }
+        }
+
+        m_otbm->endUndoGroup();
+
+        if (spriteDirty) {
+            onTileEdited(m_contextX, m_contextY, m_floor);
+            flushEditedChunksLocked();
+        }
+    }
+    if (changed) refreshAfterEdit(0);
+    return changed;
+}
+
+// Atrybuty wierzchniego itemu (okno Properties). Wszystkie ida tym samym torem:
+// mutacja w OtbmReader (z undo) + odswiezenie widoku. Sprite'a nie zmieniaja
+// (inaczej niz count), wiec bez onTileEdited/flush - wystarczy repaint.
+bool MapView::setContextItemActionId(int actionId)
+{
+    if (!m_otbm) return false;
+    const int v = std::clamp(actionId, 0, 65535);
+    std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+    return m_otbm->setTopItemActionId(m_contextX, m_contextY, m_floor,
+                                      static_cast<uint16_t>(v));
+}
+
+bool MapView::setContextItemUniqueId(int uniqueId)
+{
+    if (!m_otbm) return false;
+    const int v = std::clamp(uniqueId, 0, 65535);
+    std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+    return m_otbm->setTopItemUniqueId(m_contextX, m_contextY, m_floor,
+                                      static_cast<uint16_t>(v));
+}
+
+bool MapView::setContextItemText(const QString &text)
+{
+    if (!m_otbm) return false;
+    std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+    return m_otbm->setTopItemText(m_contextX, m_contextY, m_floor, text);
+}
+
+bool MapView::setContextItemTeleport(int destX, int destY, int destZ)
+{
+    if (!m_otbm) return false;
+    std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+    return m_otbm->setTopItemTeleport(m_contextX, m_contextY, m_floor,
+                                      destX, destY, destZ);
+}
+
 QVariantMap MapView::contextInfo() const
 {
     QVariantMap m;
@@ -1070,19 +1172,44 @@ QVariantMap MapView::contextInfo() const
         m.insert(QStringLiteral("serverId"), top.server_id);
         m.insert(QStringLiteral("clientId"), cid);
         m.insert(QStringLiteral("name"), m_otb ? m_otb->nameForServerId(top.server_id) : QString());
+        // Grupa z items.otb - po niej serwer poznaje teleport/kontener/drzwi.
+        m.insert(QStringLiteral("groupName"),
+                 m_otb ? m_otb->groupNameForServerId(top.server_id) : QString());
         // Count ma sens tylko dla stackowalnych - dla reszty OTBM i tak trzyma 1.
         m.insert(QStringLiteral("stackable"), ci && ci->is_stackable);
         m.insert(QStringLiteral("count"), top.count);
         m.insert(QStringLiteral("actionId"), top.action_id);
         m.insert(QStringLiteral("uniqueId"), top.unique_id);
+        // Tekst: pole pokazujemy dla itemow zapisywalnych wg .dat (znaki, ksiazki)
+        // albo gdy tekst juz jest (mapa moze go niesc na dowolnym itemie).
+        const QString text = top.extra ? top.extra->text : QString();
+        m.insert(QStringLiteral("text"), text);
+        m.insert(QStringLiteral("writable"), (ci && ci->is_writable) || !text.isEmpty());
+        // Teleport: pole celu dla itemow grupy Teleport z OTB (jak RME) albo gdy
+        // cel juz istnieje.
+        const bool isTele = m_otb && m_otb->isTeleportItem(top.server_id);
+        const bool hasTele = top.extra && top.extra->has_teleport;
+        m.insert(QStringLiteral("teleport"), isTele || hasTele);
+        m.insert(QStringLiteral("hasTeleportDest"), hasTele);
+        m.insert(QStringLiteral("teleportX"), hasTele ? top.extra->tele_x : 0);
+        m.insert(QStringLiteral("teleportY"), hasTele ? top.extra->tele_y : 0);
+        m.insert(QStringLiteral("teleportZ"), hasTele ? top.extra->tele_z : 0);
     } else {
         m.insert(QStringLiteral("serverId"), 0);
         m.insert(QStringLiteral("clientId"), 0);
         m.insert(QStringLiteral("name"), QString());
+        m.insert(QStringLiteral("groupName"), QString());
         m.insert(QStringLiteral("stackable"), false);
         m.insert(QStringLiteral("count"), 0);
         m.insert(QStringLiteral("actionId"), 0);
         m.insert(QStringLiteral("uniqueId"), 0);
+        m.insert(QStringLiteral("text"), QString());
+        m.insert(QStringLiteral("writable"), false);
+        m.insert(QStringLiteral("teleport"), false);
+        m.insert(QStringLiteral("hasTeleportDest"), false);
+        m.insert(QStringLiteral("teleportX"), 0);
+        m.insert(QStringLiteral("teleportY"), 0);
+        m.insert(QStringLiteral("teleportZ"), 0);
     }
     return m;
 }

@@ -22,10 +22,11 @@ Dialog {
     header: Item {
         visible: root.title.length > 0
         implicitHeight: visible ? 28 : 0
+        // Tytul WYSRODKOWANY - tak wygladaja okna w kliencie Tibii (naglowek
+        // wycentrowany nad trescia), a przy okazji rownowazy okna z szeroka trescia.
         Text {
             anchors {
-                left: parent.left
-                leftMargin: 12
+                horizontalCenter: parent.horizontalCenter
                 verticalCenter: parent.verticalCenter
             }
             text: root.title
@@ -33,10 +34,8 @@ Dialog {
             font.bold: true
             font.pixelSize: 13
         }
-        // Cienka linia pod tytulem - oddziela naglowek od tresci (jak w oknach Tibii).
-        TibiaSeparator {
-            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-            anchors { leftMargin: 8; rightMargin: 8 }
-        }
+        // BEZ separatora pod tytulem: popupwindow.png ma juz wlasny bevel na granicy
+        // naglowka (border-top=27), wiec dokladana kreska dawala PODWOJNA linie, na
+        // dodatek urwana 8px przed krawedzia - to wygladalo jak uszkodzona ramka.
     }
 }

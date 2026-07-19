@@ -1,11 +1,16 @@
 #include "brushstore.h"
 
+#include "dmedatadir.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QSaveFile>
+#include <QSet>
 #include <algorithm>
 #include <random>
 
@@ -85,17 +90,31 @@ const BrushStore::GroundDef *BrushStore::groundDef(const QString &name) const
 
 bool BrushStore::loadForVersion(int clientVersion)
 {
+    return loadForDir(QString::number(clientVersion));
+}
+
+bool BrushStore::loadForDir(const QString &dirName)
+{
     clear();
-    const QString path = QDir(QCoreApplication::applicationDirPath())
-                             .filePath(QStringLiteral("data/%1/brushes.json").arg(clientVersion));
-    if (!QFile::exists(path)) return false;
+    m_rawRoot = QJsonObject();
+    // m_path ustawiane ZAWSZE (takze gdy plik nie istnieje) - edytor brushy moze
+    // tworzyc brushes.json profilu od zera (pierwszy zapis go zalozy).
+    m_path = QDir(dmeDataDir()).filePath(QStringLiteral("%1/brushes.json").arg(dirName));
+    if (!QFile::exists(m_path)) { emit brushesChanged(); return false; }
 
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return false;
+    QFile f(m_path);
+    if (!f.open(QIODevice::ReadOnly)) { emit brushesChanged(); return false; }
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-    if (!doc.isObject()) return false;
-    const QJsonObject root = doc.object();
+    if (!doc.isObject()) { emit brushesChanged(); return false; }
+    m_rawRoot = doc.object();
 
+    parseRoot(m_rawRoot);
+    emit brushesChanged();
+    return !m_grounds.isEmpty() || !m_walls.isEmpty() || !m_doodads.isEmpty();
+}
+
+void BrushStore::parseRoot(const QJsonObject &root)
+{
     // --- borders ---
     const QJsonObject borders = root.value(QStringLiteral("borders")).toObject();
     for (auto it = borders.begin(); it != borders.end(); ++it) {
@@ -228,8 +247,238 @@ bool BrushStore::loadForVersion(int clientVersion)
         }
         if (!def.alts.isEmpty()) m_doodads.insert(it.key(), def);
     }
+}
 
-    return !m_grounds.isEmpty() || !m_walls.isEmpty() || !m_doodads.isEmpty();
+// ===== Edytor brushy ==========================================================
+
+bool BrushStore::saveJson() const
+{
+    if (m_path.isEmpty()) return false;
+    QDir().mkpath(QFileInfo(m_path).absolutePath());
+    QSaveFile f(m_path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    f.write(QJsonDocument(m_rawRoot).toJson(QJsonDocument::Indented));
+    return f.commit();
+}
+
+void BrushStore::applyRawAndSave()
+{
+    clear();
+    parseRoot(m_rawRoot);   // jedna sciezka parsowania - runtime zawsze = JSON
+    saveJson();
+    emit brushesChanged();
+}
+
+QStringList BrushStore::groundBrushNames() const
+{
+    QStringList l = m_grounds.keys();
+    l.sort(Qt::CaseInsensitive);
+    return l;
+}
+
+QStringList BrushStore::wallBrushNames() const
+{
+    QStringList l = m_walls.keys();
+    l.sort(Qt::CaseInsensitive);
+    return l;
+}
+
+// Nazwa klucza zestawu borderow dla (brush, cel). Rozne cele = rozne zestawy,
+// wiec kazdy blok ma wlasne 13 kafli.
+static QString borderKeyFor(const QString &name, const QString &to)
+{
+    const QString suffix = to.isEmpty() ? QStringLiteral("empty")
+                          : (to == QStringLiteral("*") ? QStringLiteral("any") : to);
+    return QStringLiteral("gb_%1__%2").arg(name, suffix);
+}
+
+QVariantMap BrushStore::groundBrushEdit(const QString &name) const
+{
+    QVariantMap out;
+    out.insert(QStringLiteral("zorder"), 0);
+    QVariantList itemsOut;
+    QVariantList bordersOut;
+
+    // Z SUROWEGO JSON-a (oryginalne szanse, nie skumulowane z runtime).
+    const QJsonObject g = m_rawRoot.value(QStringLiteral("grounds"))
+                              .toObject().value(name).toObject();
+    if (!g.isEmpty()) {
+        out.insert(QStringLiteral("zorder"), g.value(QStringLiteral("zorder")).toInt());
+        for (const QJsonValue &v : g.value(QStringLiteral("items")).toArray()) {
+            const QJsonArray pair = v.toArray();
+            if (pair.size() < 2) continue;
+            QVariantMap it;
+            it.insert(QStringLiteral("id"), pair.at(0).toInt());
+            it.insert(QStringLiteral("chance"), pair.at(1).toInt());
+            itemsOut.append(it);
+        }
+        // KAZDY blok borderu -> osobny wpis {to, tiles13}. Dedup po celu (ostatni
+        // wygrywa) - inner/outer z konwersji RME splaszczamy do jednej listy celow.
+        const QJsonObject bordersMap = m_rawRoot.value(QStringLiteral("borders")).toObject();
+        // Klucz dedup = to+align (osobny "outer do wody" i "inner do wody").
+        QSet<QString> seen;
+        for (const QJsonValue &bv : g.value(QStringLiteral("borders")).toArray()) {
+            const QJsonObject bo = bv.toObject();
+            const QString to = bo.value(QStringLiteral("to")).toString();
+            const QString align = bo.value(QStringLiteral("align")).toString()
+                                      == QStringLiteral("inner")
+                                  ? QStringLiteral("inner") : QStringLiteral("outer");
+            const QString dedup = to + QLatin1Char('|') + align;
+            if (seen.contains(dedup)) continue;
+            seen.insert(dedup);
+            const QString bkey = bo.value(QStringLiteral("border")).toString();
+            const QJsonArray arr = bordersMap.value(bkey).toArray();
+            QVariantList tiles;
+            for (int i = 0; i < 13; ++i)
+                tiles.append(i < arr.size() ? arr.at(i).toInt() : 0);
+            QVariantMap block;
+            block.insert(QStringLiteral("to"), to);
+            block.insert(QStringLiteral("align"), align);
+            block.insert(QStringLiteral("tiles"), tiles);
+            bordersOut.append(block);
+        }
+    }
+    out.insert(QStringLiteral("items"), itemsOut);
+    out.insert(QStringLiteral("borders"), bordersOut);
+    return out;
+}
+
+bool BrushStore::saveGroundBrush(const QString &name, int zorder,
+                                 const QVariantList &items,
+                                 const QVariantList &borderBlocks)
+{
+    if (name.trimmed().isEmpty() || items.isEmpty()) return false;
+
+    QJsonObject grounds = m_rawRoot.value(QStringLiteral("grounds")).toObject();
+    QJsonObject borders = m_rawRoot.value(QStringLiteral("borders")).toObject();
+    const QJsonObject old = grounds.value(name).toObject();
+
+    QJsonArray itemsArr;
+    int lookid = 0;
+    for (const QVariant &v : items) {
+        const QVariantMap m = v.toMap();
+        const int id = m.value(QStringLiteral("id")).toInt();
+        const int ch = std::max(1, m.value(QStringLiteral("chance")).toInt());
+        if (id <= 0) continue;
+        if (lookid == 0) lookid = id;
+        itemsArr.append(QJsonArray{ id, ch });
+    }
+    if (itemsArr.isEmpty()) return false;
+
+    // Wyczysc STARE zestawy borderow tego brusha (bez ruszania cudzych).
+    const QString prefix = QStringLiteral("gb_%1__").arg(name);
+    for (const QString &k : borders.keys())
+        if (k.startsWith(prefix)) borders.remove(k);
+
+    QJsonArray blocks;
+    for (const QVariant &bv : borderBlocks) {
+        const QVariantMap bm = bv.toMap();
+        const QString to = bm.value(QStringLiteral("to")).toString();
+        const QVariantList tiles = bm.value(QStringLiteral("tiles")).toList();
+
+        bool any = false;
+        QJsonArray arr;
+        for (int i = 0; i < 13; ++i) {
+            const int id = i < tiles.size() ? tiles.at(i).toInt() : 0;
+            arr.append(id);
+            if (i > 0 && id > 0) any = true;
+        }
+        if (!any) continue;   // pusty zestaw = pomijamy caly cel
+
+        const QString bkey = borderKeyFor(name, to);
+        borders.insert(bkey, arr);
+        QJsonObject b;
+        b.insert(QStringLiteral("align"), QStringLiteral("outer"));
+        b.insert(QStringLiteral("to"), to);   // ""=pustka, "*"=dowolny, else nazwa
+        b.insert(QStringLiteral("border"), bkey);
+        blocks.append(b);
+    }
+
+    QJsonObject g;
+    g.insert(QStringLiteral("zorder"), zorder);
+    g.insert(QStringLiteral("lookid"), lookid);
+    g.insert(QStringLiteral("items"), itemsArr);
+    g.insert(QStringLiteral("borders"), blocks);
+    // Pola zaawansowane (konwersja RME) przechodza nietkniete.
+    if (old.contains(QStringLiteral("friends")))
+        g.insert(QStringLiteral("friends"), old.value(QStringLiteral("friends")));
+    if (old.contains(QStringLiteral("optional")))
+        g.insert(QStringLiteral("optional"), old.value(QStringLiteral("optional")));
+    if (old.contains(QStringLiteral("hate_friends")))
+        g.insert(QStringLiteral("hate_friends"), old.value(QStringLiteral("hate_friends")));
+
+    grounds.insert(name, g);
+    m_rawRoot.insert(QStringLiteral("grounds"), grounds);
+    m_rawRoot.insert(QStringLiteral("borders"), borders);
+    applyRawAndSave();
+    return true;
+}
+
+void BrushStore::deleteGroundBrush(const QString &name)
+{
+    QJsonObject grounds = m_rawRoot.value(QStringLiteral("grounds")).toObject();
+    if (!grounds.contains(name)) return;
+    QJsonObject borders = m_rawRoot.value(QStringLiteral("borders")).toObject();
+    // Zestaw borderow kasujemy tylko, gdy to nasz wlasny (gb_<nazwa>) - zestawy
+    // wspoldzielone przez inne brushe (konwersja RME) zostaja.
+    const QString own = QStringLiteral("gb_") + name;
+    borders.remove(own);
+    grounds.remove(name);
+    m_rawRoot.insert(QStringLiteral("grounds"), grounds);
+    m_rawRoot.insert(QStringLiteral("borders"), borders);
+    applyRawAndSave();
+}
+
+QVariantList BrushStore::wallBrushEdit(const QString &name) const
+{
+    QVariantList out;
+    for (int i = 0; i < 17; ++i) out.append(0);
+    const QJsonObject w = m_rawRoot.value(QStringLiteral("walls"))
+                              .toObject().value(name).toObject();
+    const QJsonObject items = w.value(QStringLiteral("items")).toObject();
+    for (auto it = items.begin(); it != items.end(); ++it) {
+        const int align = it.key().toInt();
+        if (align < 0 || align >= 17) continue;
+        const QJsonArray arr = it.value().toArray();
+        if (arr.isEmpty()) continue;
+        const QJsonArray pair = arr.first().toArray();
+        if (!pair.isEmpty()) out[align] = pair.at(0).toInt();
+    }
+    return out;
+}
+
+bool BrushStore::saveWallBrush(const QString &name, const QVariantList &align17)
+{
+    if (name.trimmed().isEmpty()) return false;
+
+    QJsonObject items;
+    int lookid = 0;
+    for (int i = 0; i < 17 && i < align17.size(); ++i) {
+        const int id = align17.at(i).toInt();
+        if (id <= 0) continue;
+        if (lookid == 0 || i == 0) lookid = id;   // preferuj slot 0 (pole)
+        items.insert(QString::number(i), QJsonArray{ QJsonArray{ id, 100 } });
+    }
+    if (items.isEmpty()) return false;
+
+    QJsonObject w;
+    w.insert(QStringLiteral("lookid"), lookid);
+    w.insert(QStringLiteral("items"), items);
+
+    QJsonObject walls = m_rawRoot.value(QStringLiteral("walls")).toObject();
+    walls.insert(name, w);
+    m_rawRoot.insert(QStringLiteral("walls"), walls);
+    applyRawAndSave();
+    return true;
+}
+
+void BrushStore::deleteWallBrush(const QString &name)
+{
+    QJsonObject walls = m_rawRoot.value(QStringLiteral("walls")).toObject();
+    if (!walls.contains(name)) return;
+    walls.remove(name);
+    m_rawRoot.insert(QStringLiteral("walls"), walls);
+    applyRawAndSave();
 }
 
 const BrushStore::DoodadDef *BrushStore::doodadDef(const QString &name) const

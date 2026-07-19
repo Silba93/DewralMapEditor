@@ -446,6 +446,34 @@ void MapView::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     }
+    // Przelaczniki Show (F/S/E jak RME) - TUTAJ, nie jako globalne skroty Action:
+    // globalny skrot jednoliterowy odpalal sie tez podczas pisania w szukajce
+    // palety (wpisanie "stone" wylaczalo spawny i strefy). keyPressEvent dziala
+    // tylko z focusem na mapie. Gole klawisze bez modyfikatorow - Ctrl+F (Find
+    // Item) itd. maja przejsc bokiem.
+    if (event->modifiers() == Qt::NoModifier) {
+        if (event->key() == Qt::Key_F) {
+            setShowCreatures(!m_showCreatures);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_S) {
+            setShowSpawns(!m_showSpawns);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_E) {
+            setShowZones(!m_showZones);
+            event->accept();
+            return;
+        }
+        // M = okno minimapy (jak RME/TIME).
+        if (event->key() == Qt::Key_M) {
+            setMinimapOn(!m_minimapOn);
+            event->accept();
+            return;
+        }
+    }
     // SPACJA = przelacz rysowanie<->zaznaczanie (RME SwitchMode). Pedzel zostaje
     // zapamietany - po powrocie do rysowania malujesz tym samym.
     if (event->key() == Qt::Key_Space && !(event->modifiers() & Qt::ControlModifier)) {

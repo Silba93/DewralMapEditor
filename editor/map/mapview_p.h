@@ -22,7 +22,13 @@ inline int floorDiv(int a, int b)
 
 // Wylicza sprite ID dla komorki (ww,hh,layer) itemu na pozycji (posX,posY,posZ).
 // Pattern wybierany z pozycji kafelka (jak w Tibii: px=x%pattern_x itd.) - dzieki
-// temu gory/sciany/bordery/ground pokazuja wlasciwe warianty sprite'a. Frame 0.
+// temu gory/sciany/bordery/ground pokazuja wlasciwe warianty sprite'a.
+//
+// frame: klatka ANIMACJI (0 = pierwsza). W ukladzie .dat klatki to najbardziej
+// zewnetrzny wymiar siatki sprite'ow - indeks klatki N to po prostu indeks klatki 0
+// przesuniety o N * (rozmiar calej siatki jednej klatki). Wolajacy podaje klatke z
+// globalnego zegara (RME: elapsed/500 % frames, ITEM_FRAME_DURATION=500 ms dla
+// klientow 7.x bez czasow klatek w .dat).
 //
 // WYJATEK: itemy stackowalne (gold coin, itp.) biora pattern z COUNT, nie z pozycji.
 // W .dat maja siatke 4x2 = 8 wariantow sterty (1,2,3,4,5-9,10-24,25-49,50+). Gdyby
@@ -30,7 +36,7 @@ inline int floorDiv(int a, int b)
 // sie po kazdym przesunieciu. Mapowanie 1:1 z otclient Item::calculatePatterns
 // (rownowaznik RME MapDrawer::BlitItem subtype 0..7 na siatce 4x2).
 inline uint32_t cellSpriteId(const ClientItem *ci, int ww, int hh, int layer, int w, int h,
-                             int posX, int posY, int posZ, int count = 1)
+                             int posX, int posY, int posZ, int count = 1, int frame = 0)
 {
     const int patX = std::max(1, static_cast<int>(ci->pattern_x));
     const int patY = std::max(1, static_cast<int>(ci->pattern_y));
@@ -50,7 +56,11 @@ inline uint32_t cellSpriteId(const ClientItem *ci, int ww, int hh, int layer, in
         py = ((posY % patY) + patY) % patY;
     }
     const int pz = ((posZ % patZ) + patZ) % patZ;
-    const int idx = ((((pz * patY + py) * patX + px) * layers + layer) * h + hh) * w + ww;
+    // Rozmiar siatki JEDNEJ klatki - offset kolejnych klatek animacji.
+    const int frameStride = patZ * patY * patX * layers * h * w;
+    const int fr = std::max(0, frame) % std::max(1, static_cast<int>(ci->frames));
+    const int idx = fr * frameStride
+                    + ((((pz * patY + py) * patX + px) * layers + layer) * h + hh) * w + ww;
     if (idx < 0 || idx >= static_cast<int>(ci->sprite_ids.size())) {
         return 0;
     }

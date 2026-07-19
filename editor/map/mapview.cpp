@@ -16,6 +16,7 @@
 #include <QGuiApplication>
 #include <QSet>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -35,6 +36,123 @@ MapView::MapView(QQuickItem *parent)
     startWorker();   // watek liczacy quady chunkow w tle (async background loading)
 }
 
+
+// --- Minimapa ---------------------------------------------------------------
+
+// Paleta minimapy Tibii: indeks 0..215 = szescian 6x6x6, skladowe co 51
+// (1:1 z tablica minimap_color[256] w RME graphics.h; 216+ = czarny).
+static inline uint32_t minimapPalette(int idx)
+{
+    if (idx < 0 || idx >= 216) return 0xFF000000u;
+    const int r = (idx / 36) % 6 * 51;
+    const int g = (idx / 6) % 6 * 51;
+    const int b = idx % 6 * 51;
+    return 0xFF000000u | (static_cast<uint32_t>(r) << 16)
+                       | (static_cast<uint32_t>(g) << 8)
+                       |  static_cast<uint32_t>(b);
+}
+
+uint32_t MapView::minimapColorForTile(const OtbmTile *tile) const
+{
+    if (!tile || !m_otb || !m_dat) return 0;
+    // Od WIERZCHU stosu: pierwszy item z flaga minimap-color wygrywa (jak RME -
+    // dywan na trawie daje kolor dywanu, nie trawy).
+    for (int i = static_cast<int>(tile->items.size()) - 1; i >= 0; --i) {
+        const int cid = m_otb->clientIdForServerId(tile->items[static_cast<size_t>(i)].server_id);
+        if (cid <= 0) continue;
+        const ClientItem *ci = m_dat->itemByClientId(static_cast<uint16_t>(cid));
+        if (ci && ci->has_minimap_color)
+            return minimapPalette(static_cast<int>(ci->minimap_color));
+    }
+    return 0;   // brak koloru = tlo minimapy
+}
+
+void MapView::buildMinimap()
+{
+    m_minimapImg = QImage();
+    m_minimapFloor = m_floor;
+    m_minimapOX = m_minimapOY = 0;
+    ++m_minimapVer;
+
+    auto zit = m_floorChunkTiles.constFind(m_floor);
+    if (zit == m_floorChunkTiles.cend() || zit->isEmpty()) return;
+
+    // Bbox kafli pietra (po chunkach - tanio, bez skanu calej mapy).
+    int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
+    for (auto cit = zit->cbegin(); cit != zit->cend(); ++cit)
+        for (const OtbmTile *t : cit.value()) {
+            minX = std::min<int>(minX, t->x); maxX = std::max<int>(maxX, t->x);
+            minY = std::min<int>(minY, t->y); maxY = std::max<int>(maxY, t->y);
+        }
+    if (minX > maxX) return;
+
+    // Bezpiecznik pamieci: 1px/kafel, wiec 8k x 8k = 256 MB RGB32 - powyzej tnij
+    // (mapy OTS praktycznie nie przekraczaja 4-5k kafli w jednej osi).
+    const int w = std::min(maxX - minX + 1, 8192);
+    const int h = std::min(maxY - minY + 1, 8192);
+    m_minimapOX = minX;
+    m_minimapOY = minY;
+    m_minimapImg = QImage(w, h, QImage::Format_RGB32);
+    m_minimapImg.fill(QColor(12, 14, 18));   // tlo jak pustka renderera
+
+    for (auto cit = zit->cbegin(); cit != zit->cend(); ++cit)
+        for (const OtbmTile *t : cit.value()) {
+            const int px = t->x - minX, py = t->y - minY;
+            if (px < 0 || px >= w || py < 0 || py >= h) continue;
+            const uint32_t c = minimapColorForTile(t);
+            if (c != 0)
+                reinterpret_cast<uint32_t *>(m_minimapImg.scanLine(py))[px] = c;
+        }
+}
+
+const QImage &MapView::minimapImage()
+{
+    // m_minimapFloor == -1 (inwalidacja po wczytaniu mapy / edycji poza bbox)
+    // tez wpada w rebuild, bo m_floor jest zawsze >= 0.
+    if (m_minimapFloor != m_floor) buildMinimap();
+    return m_minimapImg;
+}
+
+void MapView::minimapUpdateTile(int x, int y, int z)
+{
+    if (z != m_minimapFloor || m_minimapImg.isNull()) return;
+    const int px = x - m_minimapOX, py = y - m_minimapOY;
+    if (px < 0 || px >= m_minimapImg.width() || py < 0 || py >= m_minimapImg.height()) {
+        // Kafel poza bbox obrazu (mapa urosla) - pelny rebuild przy nastepnym odczycie.
+        m_minimapFloor = -1;
+        ++m_minimapVer;
+        return;
+    }
+    const uint32_t c = minimapColorForTile(m_otbm ? m_otbm->tileAt(x, y, z) : nullptr);
+    reinterpret_cast<uint32_t *>(m_minimapImg.scanLine(py))[px] =
+        (c != 0) ? c : 0xFF0C0E12u;   // brak koloru = tlo
+    ++m_minimapVer;
+}
+
+void MapView::setShowAnimations(bool on)
+{
+    if (m_showAnimations == on) return;
+    m_showAnimations = on;
+
+    // Natychmiastowa zmiana stanu (takze powrot na klatke 0 przy wylaczeniu).
+    // Rytm klatek napedza MapGLView przez animTick() - tu tylko stan.
+    clearChunkQuadCache();
+    ++m_dataVersion;
+    emit showAnimationsChanged();
+    emit contentUpdated(); update();
+}
+
+void MapView::animTick()
+{
+    ++m_animFrame;
+    // Klatka jest zapieczona w quadach (cellSpriteId) - uniewaznij cache,
+    // widoczne chunki przeliczy worker (renderer trzyma stary VBO do czasu
+    // dostarczenia nowych quadow, wiec nic nie mryga). Atlas juz zawiera
+    // sprite'y wszystkich klatek (dodawane hurtem per item).
+    clearChunkQuadCache();
+    ++m_dataVersion;
+    emit contentUpdated(); update();
+}
 
 void MapView::setShowLowerFloors(bool on)
 {

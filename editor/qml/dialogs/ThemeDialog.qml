@@ -26,6 +26,27 @@ TibiaDialog {
     contentItem: Column {
         spacing: 10
 
+        // Styl calego UI: kamienny classic vs plaski ciemny (GitHub dark).
+        // Przelaczenie podmienia WSZYSTKIE tekstury (panele, przyciski, taby,
+        // pola, spinboksy) - patrz UiTheme::flatTexture.
+        Text {
+            text: "Styl aplikacji"
+            color: "#999"; font.pixelSize: 11
+        }
+        TibiaComboBox {
+            id: styleCombo
+            width: parent.width - 24; height: 23
+            model: uiTheme.styles.map(function(s) { return s.name })
+            currentIndex: {
+                for (var i = 0; i < uiTheme.styles.length; ++i)
+                    if (uiTheme.styles[i].id === uiTheme.style) return i
+                return 0
+            }
+            onActivated: uiTheme.style = uiTheme.styles[currentIndex].id
+        }
+
+        TibiaSeparator { width: parent.width - 24 }
+
         Text {
             text: "Gotowe motywy"
             color: "#999"; font.pixelSize: 11

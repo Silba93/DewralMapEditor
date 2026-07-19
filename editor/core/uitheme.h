@@ -36,6 +36,11 @@ class UiTheme : public QObject
     // bez niej zmiana motywu nie bylaby widoczna do restartu.
     Q_PROPERTY(QString tex READ tex NOTIFY themeChanged)
     Q_PROPERTY(QVariantList presets READ presets CONSTANT)
+    // Styl calego UI: "classic" = kamienne tekstury z qrc, "flat" = plaski ciemny
+    // (GitHub dark) SYNTETYZOWANY w locie - te same nazwy plikow i metryki border,
+    // wiec ZERO zmian w QML (BorderImage tnie tak samo). Patrz flatTexture().
+    Q_PROPERTY(QString style READ style WRITE setStyle NOTIFY themeChanged)
+    Q_PROPERTY(QVariantList styles READ styles CONSTANT)
 
 public:
     explicit UiTheme(QObject *parent = nullptr);
@@ -45,6 +50,9 @@ public:
 
     QString tex() const;
     QVariantList presets() const;
+    QString style() const;
+    void setStyle(const QString &s);
+    QVariantList styles() const;
 
     // Tekstura z qrc:/ui/<file> po przebarwieniu. Wolane przez provider, ktory moze
     // dzialac na innym watku niz GUI - stad mutex na m_tint.
@@ -54,8 +62,16 @@ signals:
     void themeChanged();
 
 private:
+    // Synteza plaskiej tekstury (styl "flat") dla nazwy pliku classic UI: te same
+    // metryki border, stany rozrozniane po slowach w nazwie (hover/pressed/active/
+    // checked), specjalne przypadki (popupwindow z paskiem tytulu, strzalki
+    // spinboxa, separatory). Nieznane pliki dostaja generyczny ciemny panel -
+    // nowe tekstury dzialaja w flat od razu, bez dopisywania.
+    QImage flatTexture(const QString &file) const;
+
     mutable QMutex m_mutex;
     QColor m_tint;
+    QString m_style;   // "classic" | "flat"
     int m_version = 0;
 };
 

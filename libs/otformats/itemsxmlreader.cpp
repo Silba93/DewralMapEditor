@@ -1,0 +1,115 @@
+#include "itemsxmlreader.h"
+
+#include "dmedatadir.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QXmlStreamReader>
+
+ItemsXmlReader::ItemsXmlReader(QObject *parent)
+    : QObject(parent)
+{
+}
+
+void ItemsXmlReader::clear()
+{
+    if (m_items.isEmpty()) return;
+    m_items.clear();
+    emit loadedChanged();
+}
+
+bool ItemsXmlReader::loadForVersion(int version)
+{
+    return loadForDir(QString::number(version));
+}
+
+bool ItemsXmlReader::loadForDir(const QString &dirName)
+{
+    const QString path = QDir(dmeDataDir())
+                             .filePath(QStringLiteral("%1/items.xml").arg(dirName));
+    if (!QFile::exists(path)) {
+        clear();
+        return false;   // brak pliku to nie blad - dzialamy na samym OTB
+    }
+    return loadFile(path);
+}
+
+bool ItemsXmlReader::loadFile(const QString &path)
+{
+    m_items.clear();
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        emit loadedChanged();
+        return false;
+    }
+
+    QXmlStreamReader xml(&f);
+    // Id itemow, ktorych <item> wlasnie parsujemy - jeden wpis moze obejmowac
+    // ZAKRES (fromid/toid), a zagniezdzone <attribute> dotycza calego zakresu.
+    QVector<int> currentIds;
+
+    while (!xml.atEnd()) {
+        const auto token = xml.readNext();
+        if (token == QXmlStreamReader::StartElement) {
+            const auto tag = xml.name();
+            if (tag == QLatin1String("item")) {
+                currentIds.clear();
+                const auto a = xml.attributes();
+                const QString name = a.value(QLatin1String("name")).toString();
+
+                if (a.hasAttribute(QLatin1String("id"))) {
+                    const int id = a.value(QLatin1String("id")).toInt();
+                    if (id > 0) currentIds.append(id);
+                } else if (a.hasAttribute(QLatin1String("fromid"))
+                           && a.hasAttribute(QLatin1String("toid"))) {
+                    const int from = a.value(QLatin1String("fromid")).toInt();
+                    const int to = a.value(QLatin1String("toid")).toInt();
+                    // Zakresy w items.xml bywaja szerokie - limit chroni przed
+                    // uszkodzonym plikiem (np. toid=65535 przy fromid=1).
+                    if (from > 0 && to >= from && (to - from) <= 65535) {
+                        for (int id = from; id <= to; ++id) currentIds.append(id);
+                    }
+                }
+
+                for (int id : currentIds) {
+                    Entry &e = m_items[id];
+                    if (!name.isEmpty()) e.name = name;
+                }
+            } else if (tag == QLatin1String("attribute") && !currentIds.isEmpty()) {
+                const auto a = xml.attributes();
+                // Interesuje nas wylacznie "type" - to on decyduje, czy item jest
+                // teleportem/depotem/drzwiami. Reszta atrybutow (weight, armor...)
+                // to dane gameplayowe, dla edytora bez znaczenia.
+                if (a.value(QLatin1String("key")).toString().compare(
+                        QLatin1String("type"), Qt::CaseInsensitive) == 0) {
+                    const QString type = a.value(QLatin1String("value")).toString().toLower();
+                    for (int id : currentIds) m_items[id].type = type;
+                }
+            }
+        } else if (token == QXmlStreamReader::EndElement) {
+            if (xml.name() == QLatin1String("item")) currentIds.clear();
+        }
+    }
+
+    emit loadedChanged();
+    return !xml.hasError();
+}
+
+QString ItemsXmlReader::nameForServerId(int serverId) const
+{
+    auto it = m_items.constFind(serverId);
+    return it == m_items.cend() ? QString() : it->name;
+}
+
+QString ItemsXmlReader::typeForServerId(int serverId) const
+{
+    auto it = m_items.constFind(serverId);
+    return it == m_items.cend() ? QString() : it->type;
+}
+
+bool ItemsXmlReader::isTeleport(int serverId) const
+{
+    return typeForServerId(serverId) == QLatin1String("teleport");
+}

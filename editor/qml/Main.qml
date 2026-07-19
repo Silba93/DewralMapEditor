@@ -146,6 +146,14 @@ Window {
         id: prefs
         property string clientFolder: ""       // legacy (migrowane do clientPathsJson)
         property string clientPathsJson: "{}"  // { "772": "C:/...", "1098": "D:/..." }
+        // Profile CUSTOM (osobne pozycje na liscie wersji, nie aliasy!):
+        // [{ "name": "Midhem", "base": 1098 }] - kazdy ma wlasny folder klienta
+        // (klucz "Midhem" w clientPathsJson) i wlasny katalog data/Midhem/.
+        property string customProfilesJson: "[]"
+        // Pamiec "mapa -> profil": { "C:/maps/midhem.otbm": "Midhem" }. Mapa niesie
+        // tylko NUMER wersji, wiec bez tego kazde otwarcie wracalo na profil
+        // numeryczny (i np. palety zapisywaly sie do data/1098 zamiast data/Midhem).
+        property string mapProfilesJson: "{}"
         property string recentMapsJson: "[]"
         property string customPalettesJson: "{}" // { "Moja paleta": [serverId...] }
         property bool showStartup: true
@@ -197,24 +205,78 @@ Window {
     // (C++), zapisywane do tilesets.json W FOLDERZE KLIENTA (obok Tibia.dat) - patrz
     // demo/tilesetstore.h. Podruzuje z klientem/mapa, nie z ustawieniami aplikacji.
 
-    // --- Wersje klienta (jak RME: kazda wersja ma swoj folder dat/spr/otb) ---
+    // --- Profile klienta (jak RME: kazdy ma swoj folder dat/spr/otb) ---
+    // Tozsamosc profilu to KLUCZ (string): "1098" = wersja bazowa, "Midhem" =
+    // profil custom (osobna pozycja listy, z baza w customProfiles). clientPaths
+    // mapuje klucz -> folder klienta.
     property var clientPaths: ({})
+    property var customProfiles: []   // [{name:"Midhem", base:1098}]
+    property var mapProfiles: ({})    // sciezka mapy -> klucz profilu (patrz prefs)
     readonly property var knownVersions: [772, 780, 792, 800, 810, 820, 840, 850, 854,
                                           860, 870, 910, 946, 954, 960, 986, 1010,
                                           1030, 1041, 1077, 1098]
-    property int loadedClientVersion: 0        // wersja aktualnie zaladowanego klienta
+    property int loadedClientVersion: 0        // wersja BAZOWA zaladowanego klienta (numer)
+    property string loadedClientKey: ""        // klucz zaladowanego profilu ("1098"/"Midhem")
     property string loadedClientFolder: ""
     property string pendingMapPath: ""         // mapa czekajaca na wskazanie folderu
-    property int pendingVersion: 0
+    property string pendingKey: ""             // profil czekajacy na wskazanie folderu
 
     function versionLabel(v) {
         if (v >= 10100) return "10.100"
         return Math.floor(v / 100) + "." + ("0" + (v % 100)).slice(-2)
     }
 
+    // --- Klucze profili ---
+    // Wersja bazowa profilu: "1098" -> 1098; "Midhem" -> base z customProfiles.
+    function profileVer(key) {
+        var n = Number(key)
+        if (!isNaN(n) && n > 0) return n
+        for (var i = 0; i < customProfiles.length; ++i)
+            if (customProfiles[i].name === key) return customProfiles[i].base
+        return 0
+    }
+    // Etykieta: "10.98" dla bazowych, "Midhem  (10.98)" dla customow.
+    function profileLabel(key) {
+        var n = Number(key)
+        if (!isNaN(n) && n > 0) return versionLabel(n)
+        return key + "  (" + versionLabel(profileVer(key)) + ")"
+    }
+    // Wszystkie pozycje listy profili: wersje bazowe + customy na koncu.
+    function allProfileKeys() {
+        return knownVersions.map(function(v) { return String(v) })
+                            .concat(customProfiles.map(function(p) { return p.name }))
+    }
+    function isCustomKey(key) { return isNaN(Number(key)) || Number(key) <= 0 }
+
+    // Nowy profil custom oparty o wersje bazowa. false = zla/zajeta nazwa.
+    function addCustomProfile(name, base) {
+        name = (name || "").trim()
+        // Nazwa nie moze byc pusta, liczba (kolizja z bazowymi) ani duplikatem.
+        if (name === "" || !isNaN(Number(name))) return false
+        for (var i = 0; i < customProfiles.length; ++i)
+            if (customProfiles[i].name.toLowerCase() === name.toLowerCase()) return false
+        var cp = customProfiles.slice()
+        cp.push({ name: name, base: base })
+        customProfiles = cp
+        prefs.customProfilesJson = JSON.stringify(customProfiles)
+        return true
+    }
+    function removeCustomProfile(name) {
+        customProfiles = customProfiles.filter(function(p) { return p.name !== name })
+        prefs.customProfilesJson = JSON.stringify(customProfiles)
+        var paths = JSON.parse(JSON.stringify(clientPaths))
+        delete paths[name]
+        clientPaths = paths
+        saveClientPaths()
+    }
+
     function loadClientPaths() {
         try { clientPaths = JSON.parse(prefs.clientPathsJson) || ({}) }
         catch (e) { clientPaths = ({}) }
+        try { customProfiles = JSON.parse(prefs.customProfilesJson) || [] }
+        catch (e) { customProfiles = [] }
+        try { mapProfiles = JSON.parse(prefs.mapProfilesJson) || ({}) }
+        catch (e) { mapProfiles = ({}) }
         // Migracja starego pojedynczego folderu (7.72) do nowego modelu.
         if (Object.keys(clientPaths).length === 0 && prefs.clientFolder !== "") {
             var cp = ({}); cp["772"] = prefs.clientFolder
@@ -228,6 +290,29 @@ Window {
         cp[String(ver)] = folder
         clientPaths = cp          // nowy obiekt -> bindingi sie odswieza
         saveClientPaths()
+    }
+    // Dane profilu (brushes/tilesety/creatures/items.xml). Profil CUSTOM (np.
+    // "Midhem") ma WLASNY katalog data/<Nazwa>/ - per plik, z fallbackiem do bazy
+    // data/<wersja>/:
+    //  - brushes/creatures/items.xml: tylko odczyt -> gdy w profilu brak pliku,
+    //    bierzemy bazowy (mozna nadpisac np. same creatures).
+    //  - tilesets: ZAWSZE katalog profilu - edycje palet zapisuja sie do tego
+    //    samego pliku, wiec wlasne palety Midhema laduja w data/Midhem/
+    //    tilesets.json i nie nadpisuja bazy wersji. Punkt startowy: skopiuj
+    //    data/<wersja>/tilesets.json do data/<Nazwa>/.
+    function loadProfileData(key) {
+        var ver = profileVer(key)
+        if (!isCustomKey(key)) {
+            tilesetStore.loadForVersion(ver)
+            brushStore.loadForVersion(ver)
+            creatureStore.loadForVersion(ver)
+            itemsXml.loadForVersion(ver)
+            return
+        }
+        tilesetStore.loadForDir(key)
+        if (!brushStore.loadForDir(key))    brushStore.loadForVersion(ver)
+        if (!creatureStore.loadForDir(key)) creatureStore.loadForVersion(ver)
+        if (!itemsXml.loadForDir(key))      itemsXml.loadForVersion(ver)
     }
 
     // Pliki klienta w folderze (preferujac standardowe nazwy).
@@ -262,16 +347,66 @@ Window {
     function ensureClientLoaded(reader) {
         var ver = reader.suggestedClientVersion()
         if (ver <= 0) ver = 772
-        return ensureClientVersion(ver)
+        // Pamiec per mapa MA PIERWSZENSTWO: raz wybrany profil (np. "Midhem")
+        // trzyma sie tej mapy, mimo ze naglowek mowi tylko "1098".
+        var remembered = reader.filePath !== "" ? (mapProfiles[reader.filePath] || "") : ""
+        var key = remembered !== "" && (clientPaths[remembered] || "") !== ""
+                  ? remembered : resolveKeyForVersion(ver)
+        return ensureClientVersion(key)
     }
 
-    // Jak wyzej, ale dla JAWNEJ wersji - File > New pozwala wybrac wersje nowej mapy.
-    function ensureClientVersion(ver) {
-        var folder = clientPaths[String(ver)] || ""
-        var files = clientFiles(folder)
-        if (folder === "" || !files.dat || !files.spr || !files.otb) return false
+    // Zapamietaj profil dla mapy (trwale, w Settings).
+    function rememberMapProfile(mapPath, key) {
+        if (mapPath === "" || key === "") return
+        if (mapProfiles[mapPath] === key) return
+        var mp = JSON.parse(JSON.stringify(mapProfiles))
+        mp[mapPath] = key
+        mapProfiles = mp
+        prefs.mapProfilesJson = JSON.stringify(mapProfiles)
+    }
 
-        if (loadedClientVersion !== ver || loadedClientFolder !== folder) {
+    // Reczne przelaczenie profilu dla BIEZACEJ mapy (menu Map > Profil klienta).
+    function switchMapProfile(key) {
+        if (!ensureClientVersion(key)) return
+        if (otbmReader.filePath !== "") rememberMapProfile(otbmReader.filePath, key)
+    }
+
+    // Skonfigurowane profile (z folderem) - do przelacznika w menu Map.
+    function configuredProfileKeys() {
+        var keys = Object.keys(clientPaths).filter(function(k) {
+            return (clientPaths[k] || "") !== ""
+        })
+        keys.sort(function(a, b) {
+            var na = Number(a), nb = Number(b)
+            var ca = isNaN(na), cb = isNaN(nb)
+            if (ca !== cb) return ca ? 1 : -1
+            return ca ? a.localeCompare(b) : na - nb
+        })
+        return keys
+    }
+
+    // Mapa mowi tylko NUMER wersji - wybierz profil: bazowy numeryczny, jesli ma
+    // folder; inaczej pierwszy custom o tej bazie z folderem; inaczej numeryczny
+    // (nieskonfigurowany -> flow zapyta o folder).
+    function resolveKeyForVersion(ver) {
+        if ((clientPaths[String(ver)] || "") !== "") return String(ver)
+        for (var i = 0; i < customProfiles.length; ++i)
+            if (customProfiles[i].base === ver
+                && (clientPaths[customProfiles[i].name] || "") !== "")
+                return customProfiles[i].name
+        return String(ver)
+    }
+
+    // Jak wyzej, ale dla JAWNEGO KLUCZA profilu ("1098" / "Midhem") - File > New
+    // i ekran startowy wybieraja profil wprost.
+    function ensureClientVersion(key) {
+        key = String(key)
+        var ver = profileVer(key)
+        var folder = clientPaths[key] || ""
+        var files = clientFiles(folder)
+        if (ver <= 0 || folder === "" || !files.dat || !files.spr || !files.otb) return false
+
+        if (loadedClientKey !== key || loadedClientFolder !== folder) {
             // .otfi (jak RME) nadpisuje autodetekcje formatu .dat/.spr wg wersji -
             // potrzebne dla niestandardowych klientow (np. OTClient enableFeature(...)).
             var hasOtfi = otfiReader.loadFromFolder(folder)
@@ -288,10 +423,9 @@ Window {
 
             otbReader.loadFile(files.otb)
             loadedClientVersion = ver
+            loadedClientKey = key
             loadedClientFolder = folder
-            tilesetStore.loadForVersion(ver)   // data/<ver>/tilesets.json - jeden plik na wersje, opcjonalny
-            brushStore.loadForVersion(ver)     // data/<ver>/brushes.json - ground brushe + auto-bordery
-            creatureStore.loadForVersion(ver)  // data/<ver>/creatures.xml - paleta potworow (opcjonalny)
+            loadProfileData(key)   // data/<NazwaProfilu>/ lub data/<ver>/ (patrz funkcja)
             // Atlas mogl powstac na ZLYCH danych klienta (flow "mapa najpierw" dla
             // wykrycia wersji, albo karta z innej wersji) - przebuduj od zera.
             mapView.rebuildAtlas()
@@ -304,21 +438,21 @@ Window {
     // konfiguracji, pytamy o folder i wracamy do ladowania.
     // File > New: nowa pusta mapa w nowej karcie. Wersja OTBM i wersje items.otb
     // ustawia OtbmReader::newMap; filePath zostaje pusty, wiec Ctrl+S robi Save As.
-    function createNewMap(ver, w, h) {
-        if (!ensureClientVersion(ver)) {
-            // Brak folderu klienta tej wersji - popros i wroc tu po wyborze.
-            pendingNewMap = { ver: ver, w: w, h: h }
-            pendingVersion = ver
+    function createNewMap(key, w, h) {
+        if (!ensureClientVersion(key)) {
+            // Brak folderu klienta tego profilu - popros i wroc tu po wyborze.
+            pendingNewMap = { key: key, w: w, h: h }
+            pendingKey = String(key)
             if (started) versionFolderDialogMain.open()
             else startupScreen.openVersionFolderDialog()
             return
         }
         if (otbmReader.loaded || otbmReader.filePath !== "") docMgr.newDocument()
-        otbmReader.newMap(w, h, ver, otbReader.majorVersion, otbReader.minorVersion)
+        otbmReader.newMap(w, h, profileVer(key), otbReader.majorVersion, otbReader.minorVersion)
         mapView.centerOnTile(Math.floor(w / 2), Math.floor(h / 2), 7)  // srodek, parter
         started = true
     }
-    property var pendingNewMap: null   // {ver,w,h} czekajace na wskazanie folderu
+    property var pendingNewMap: null   // {key,w,h} czekajace na wskazanie folderu
 
     function loadEverything(mapPath) {
         if (mapPath === "") return false
@@ -343,12 +477,15 @@ Window {
 
         if (!ensureClientLoaded(otbmReader)) {
             pendingMapPath = mapPath
-            pendingVersion = otbmReader.suggestedClientVersion() > 0
-                             ? otbmReader.suggestedClientVersion() : 772
+            pendingKey = resolveKeyForVersion(otbmReader.suggestedClientVersion() > 0
+                                              ? otbmReader.suggestedClientVersion() : 772)
             if (started) versionFolderDialogMain.open()
             else startupScreen.openVersionFolderDialog()
             return false
         }
+        // Utrwal skojarzenie mapa->profil (pierwsze otwarcie zapisuje wynik
+        // resolvera; reczna zmiana w menu Map nadpisze go pozniej).
+        rememberMapProfile(mapPath, loadedClientKey)
         addRecent(mapPath)
         started = true
         return true
@@ -358,14 +495,14 @@ Window {
     function onVersionFolderPicked(folderUrl) {
         var f = fileTools.toLocalFile(folderUrl)
         if (!f) return
-        setVersionFolder(pendingVersion, f)
+        setVersionFolder(pendingKey, f)
         var mp = pendingMapPath
         pendingMapPath = ""
         if (mp !== "") loadEverything(mp)
-        else if (pendingNewMap) {   // File > New czekalo na folder tej wersji
+        else if (pendingNewMap) {   // File > New czekalo na folder tego profilu
             var nm = pendingNewMap
             pendingNewMap = null
-            createNewMap(nm.ver, nm.w, nm.h)
+            createNewMap(nm.key, nm.w, nm.h)
         }
     }
 
@@ -374,6 +511,7 @@ Window {
         // Naglowek pod aktualnego klienta (OTBM version + wersje items.otb), jak RME.
         otbmReader.applyClientVersions(loadedClientVersion, otbReader.majorVersion, otbReader.minorVersion)
         if (otbmReader.saveFile(otbmReader.filePath)) {   // saveFile sam czysci dirty
+            rememberMapProfile(otbmReader.filePath, loadedClientKey)
             savedToast = "Saved: " + fileTools.fileName(otbmReader.filePath)
             savedToastTimer.restart()
         }
@@ -545,6 +683,25 @@ Window {
         TibiaMenu {
             title: "Map"
             Action { text: "Edit Towns"; shortcut: "Ctrl+T"; enabled: otbmReader.loaded; onTriggered: townsDialog.open() }
+            // Profil klienta BIEZACEJ mapy (np. czyste 10.98 vs "Midhem"). Wybor
+            // jest zapamietywany per mapa - kolejne otwarcia wracaja na ten profil,
+            // a palety/brushe zapisuja sie do data/<profil>/.
+            TibiaMenu {
+                id: mapProfileMenu
+                title: "Profil klienta"
+                Instantiator {
+                    model: root.configuredProfileKeys()
+                    delegate: TibiaMenuItem {
+                        required property string modelData
+                        text: root.profileLabel(modelData)
+                        checkable: true
+                        checked: root.loadedClientKey === modelData
+                        onTriggered: root.switchMapProfile(modelData)
+                    }
+                    onObjectAdded: (index, object) => mapProfileMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => mapProfileMenu.removeItem(object)
+                }
+            }
             Action { text: "Edit Items"; enabled: false }        // jak w RME: wyszarzone
             Action { text: "Edit Monsters"; enabled: false }
             MenuSeparator {}
@@ -623,6 +780,17 @@ Window {
         // Menu "View" - zoom jak w RME (Ctrl+ / Ctrl- / Ctrl+0) + przelaczniki widoku
         // i ustawienia rzadko zmieniane (limit FPS, historia undo).
         TibiaMenu {
+            title: "Tools"
+            // Wizualny edytor ground/wall brushy (DnD z palety) - zapis do
+            // data/<profil>/brushes.json. Wymaga zaladowanego klienta (ikony).
+            Action {
+                text: "Brush Editor…"
+                enabled: otbReader.loaded
+                onTriggered: brushEditorDialog.open()
+            }
+        }
+
+        TibiaMenu {
             title: "View"
             Action { text: "Zoom In";     shortcut: "Ctrl++"; enabled: otbmReader.loaded; onTriggered: mapView.zoomSteps(1) }
             Action { text: "Zoom Out";    shortcut: "Ctrl+-"; enabled: otbmReader.loaded; onTriggered: mapView.zoomSteps(-1) }
@@ -642,6 +810,43 @@ Window {
                 text: "Efekt przy stawianiu"
                 checkable: true; checked: mapView.placeEffect
                 onTriggered: mapView.placeEffect = !mapView.placeEffect
+            }
+            MenuSeparator {}
+            // Przelaczniki warstw (RME menu "Show"). Skroty jak RME: Shift+G/F/S/
+            // Ctrl+H/E. Domyslnie wszystko widoczne, siatka wylaczona.
+            Action {
+                text: "Show grid"; shortcut: "Shift+G"
+                checkable: true; checked: mapView.showGrid
+                onTriggered: mapView.showGrid = !mapView.showGrid
+            }
+            // UWAGA: F/S/E celowo BEZ shortcut - globalny skrot jednoliterowy odpalal
+            // sie tez podczas PISANIA w szukajce palety (wpisanie "stone" wylaczalo
+            // spawny i strefy!). Klawisze obsluguje MapView::keyPressEvent - dzialaja
+            // tylko z focusem na mapie (hint w nawiasie).
+            Action {
+                text: "Show creatures  (F)"
+                checkable: true; checked: mapView.showCreatures
+                onTriggered: mapView.showCreatures = !mapView.showCreatures
+            }
+            Action {
+                text: "Show spawns  (S)"
+                checkable: true; checked: mapView.showSpawns
+                onTriggered: mapView.showSpawns = !mapView.showSpawns
+            }
+            Action {
+                text: "Show houses"; shortcut: "Ctrl+H"
+                checkable: true; checked: mapView.showHouses
+                onTriggered: mapView.showHouses = !mapView.showHouses
+            }
+            Action {
+                text: "Show special (strefy)  (E)"
+                checkable: true; checked: mapView.showZones
+                onTriggered: mapView.showZones = !mapView.showZones
+            }
+            Action {
+                text: "Always show zones"
+                checkable: true; checked: mapView.showZonesAlways
+                onTriggered: mapView.showZonesAlways = !mapView.showZonesAlways
             }
             MenuSeparator {}
             // Rozmiar kafelkow palety (jak RME Icon Size). Radio przez checked.
@@ -1034,6 +1239,31 @@ Window {
                 onClicked: mapView.torchOn = !mapView.torchOn
             }
 
+            // Animacje itemow (jak RME "Show Animation"). Ikona conditions.png -
+            // tymczasowa (najblizsza "ruchowi" z dostepnych; latwo podmienic).
+            TbBtn {
+                width: 38
+                height: 38
+                iconSize: 26
+                anchors.verticalCenter: parent.verticalCenter
+                active: mapView.showAnimations
+                tip: "Animacje itemow"
+                iconSource: "qrc:/ui/conditions.png"
+                onClicked: mapView.showAnimations = !mapView.showAnimations
+            }
+
+            // Okno minimapy (jak RME "Minimap", M).
+            TbBtn {
+                width: 38
+                height: 38
+                iconSize: 26
+                anchors.verticalCenter: parent.verticalCenter
+                active: mapView.minimapOn
+                tip: "Minimapa"
+                iconSource: "qrc:/ui/compass.png"
+                onClicked: mapView.minimapOn = !mapView.minimapOn
+            }
+
             Rectangle { width: 1; height: 18; color: "#555"; anchors.verticalCenter: parent.verticalCenter }
 
             // verticalCenter na kazdym przycisku: wyzszy przycisk pochodni (38px)
@@ -1191,8 +1421,11 @@ Window {
         clip: true
 
         // Dane kafelka kliknitego PPM (do menu kontekstowego).
-        property var ctx: ({ hasItem: false, serverId: 0, clientId: 0, name: "", x: 0, y: 0, z: 0,
-                             creatureName: "", creatureSpawntime: 0, spawnRadius: 0 })
+        property var ctx: ({ hasItem: false, serverId: 0, clientId: 0, name: "", groupName: "", x: 0, y: 0, z: 0,
+                             creatureName: "", creatureSpawntime: 0, spawnRadius: 0,
+                             actionId: 0, uniqueId: 0, text: "", writable: false,
+                             teleport: false, hasTeleportDest: false,
+                             teleportX: 0, teleportY: 0, teleportZ: 0 })
 
         MapView {
             id: mapView
@@ -1252,16 +1485,75 @@ Window {
             // Select Brush (jak RME): jesli item nalezy do pedzla (ground/wall/doodad),
             // aktywuj TEN pedzel. useGroundBrush sam wykrywa typ. Wyszarzone dla itemow
             // spoza brushy (jest wtedy Select RAW).
-            Action { text: "Select Brush"
-                enabled: mapArea.ctx.hasItem && mapView.brushForServerId(mapArea.ctx.serverId) !== ""
-                onTriggered: mapView.useGroundBrush(mapArea.ctx.serverId) }
+            // TibiaMenuItem (nie Action): pozycje nieadekwatne do kliknietego itemu maja
+            // ZNIKAC, a nie wisiec wyszarzone. Action w Menu da sie tylko wylaczyc,
+            // wiec te dwie pozycje wstawiamy recznie. height=0 przy visible=false -
+            // inaczej ukryta pozycja dalej zajmowalaby wiersz w menu.
+            TibiaMenuItem {
+                text: "Select Brush"
+                visible: mapArea.ctx.hasItem
+                         && mapView.brushForServerId(mapArea.ctx.serverId) !== ""
+                height: visible ? implicitHeight : 0
+                onTriggered: mapView.useGroundBrush(mapArea.ctx.serverId)
+            }
             Action { text: "Select RAW"; enabled: mapArea.ctx.hasItem
                 onTriggered: mapView.brushServerId = mapArea.ctx.serverId }
+            // "Goto Destination" jak w RME (MapCanvas::OnGotoDestination): skacze na
+            // cel teleportu, zeby jednym klikiem sprawdzic, dokad prowadzi.
+            // centerOnPosition zapamietuje poprzedni srodek, wiec P wraca skad przyszlismy.
+            // Widoczne TYLKO dla realnego teleportu z ustawionym celem.
+            TibiaMenuItem {
+                text: "Go To Destination"
+                visible: mapArea.ctx.teleport === true && mapArea.ctx.hasTeleportDest === true
+                height: visible ? implicitHeight : 0
+                onTriggered: mapView.centerOnPosition(mapArea.ctx.teleportX,
+                                                      mapArea.ctx.teleportY,
+                                                      mapArea.ctx.teleportZ)
+            }
             Action { text: "Properties"
                 // Takze kafel z potworem/spawnem bez itemow (potwor na pustym kaflu).
                 enabled: mapArea.ctx.hasItem || mapArea.ctx.creatureName !== ""
                          || mapArea.ctx.spawnRadius > 0
                 onTriggered: propsDialog.open() }
+        }
+
+        // Okno minimapy (przycisk z kompasem w topbarze / klawisz M). Plywajacy
+        // panel w prawym gornym rogu obszaru mapy - 1 px = 1 kafel (kolko = zoom),
+        // klik/przeciaganie centruje glowny widok, biala ramka = widoczny obszar.
+        Item {
+            visible: mapView.minimapOn
+            width: 236
+            height: 262
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 10
+
+            TibiaPanel { anchors.fill: parent }
+
+            Text {
+                id: minimapTitle
+                anchors { left: parent.left; top: parent.top; leftMargin: 8; topMargin: 5 }
+                text: "Minimap  -  floor " + mapView.floor
+                color: "#ddd"; font.pixelSize: 12; font.bold: true
+            }
+            // Zamkniecie (to samo co ponowne klikniecie kompasu / M).
+            Text {
+                anchors { right: parent.right; top: parent.top; rightMargin: 8; topMargin: 4 }
+                text: "x"; color: mmCloseMa.containsMouse ? "#fff" : "#999"
+                font.pixelSize: 13; font.bold: true
+                MouseArea {
+                    id: mmCloseMa
+                    anchors.fill: parent; anchors.margins: -4
+                    hoverEnabled: true
+                    onClicked: mapView.minimapOn = false
+                }
+            }
+
+            MinimapView {
+                source: mapView
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                anchors { top: minimapTitle.bottom; margins: 6; topMargin: 4 }
+            }
         }
 
         // Licznik FPS (lewy gorny rog)
@@ -1316,7 +1608,7 @@ Window {
     // Wybor folderu klienta dla wersji wykrytej z mapy (po starcie, np. File->Open).
     FolderDialog {
         id: versionFolderDialogMain
-        title: "Wskaz folder klienta " + root.versionLabel(root.pendingVersion)
+        title: "Wskaz folder klienta " + root.profileLabel(root.pendingKey)
                + " (Tibia.dat / Tibia.spr / items.otb)"
         onAccepted: root.onVersionFolderPicked(selectedFolder)
     }
@@ -1342,6 +1634,8 @@ Window {
     // Wlasciwosci itemu (z menu kontekstowego)
     // Wlasciwosci itemu (PPM na mapie) - patrz dialogs/ItemPropertiesDialog.qml.
     ItemPropertiesDialog { id: propsDialog; ctx: mapArea.ctx; mapCtrl: mapView }
+    // Tools > Brush Editor (wizualne skladanie ground/wall brushy).
+    BrushEditorDialog { id: brushEditorDialog; mapCtrl: mapView }
 
     // --- Map > Go To Position (Ctrl+G): przeskok na X,Y,Z (jak w RME) ---
     GoToPositionDialog { id: gotoPosDialog; mapCtrl: mapView }

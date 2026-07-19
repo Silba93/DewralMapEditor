@@ -65,6 +65,8 @@ void MapView::rebuildFloorIndex()
     updateCurrentFloor();      // czyta indeks (zgodne z czytaniem watku) + pisze biezace
     clearChunkQuadCache();     // dane sie zmienily -> quady do przeliczenia w tle
     ++m_dataVersion;           // MapGLView przebuduje bufor instancji
+    m_minimapFloor = -1;       // minimapa do przebudowy (nowa mapa/atlas)
+    ++m_minimapVer;
 }
 
 bool MapView::chunkHasContent(quint64 key) const
@@ -123,11 +125,16 @@ void MapView::appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) c
         const int ox = ci->has_offset ? ci->offset_x : 0;
         const int oy = ci->has_offset ? ci->offset_y : 0;
 
+        // Klatka animacji z globalnego zegara (0 gdy animacje wylaczone) - patrz
+        // itemFrame/setShowAnimations. Zapieczona w quadach; tick zegara uniewaznia
+        // cache chunkow i quady przelicza sie z nowa klatka.
+        const int fr = itemFrame(ci);
+
         for (int l = 0; l < layers; ++l)
             for (int hh = 0; hh < h; ++hh)
                 for (int ww = 0; ww < w; ++ww) {
                     const uint32_t sid = cellSpriteId(ci, ww, hh, l, w, h, tile->x, tile->y,
-                                                      tile->z, item.count);
+                                                      tile->z, item.count, fr);
                     if (sid == 0) continue;
                     const int as = atlasSlotForSprite(sid);
                     if (as < 0) continue;
@@ -142,8 +149,14 @@ void MapView::appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) c
                         // nad zwyklym PZ tintem (niebieski zamiast zielonego) - 1:1 z RME
                         // map_drawer.cpp DrawTile (house tile ma inny tint niz "goly" PZ,
                         // mimo ze house brush ustawia PZ na kaflu - patrz setHouseTileAt).
-                        isGround ? (static_cast<int>(tile->flags)
-                                   | (tile->is_house ? 64 : 0))
+                        // Tint strefy/domu na SPODZIE STOSU (idx==0), jak RME tintuje
+                        // kafel - NIE na kazdym itemie z data-flaga is_ground: w 7.x
+                        // sporo itemow (kamienne posadzki, platformy) ma te flage i
+                        // lezac NAD prawdziwym groundem dostawaly drugi tint ("zielony
+                        // brush na itemie"). Kafle BEZ itemow obsluguje osobna nakladka
+                        // (glCollectZoneMarkInstances). Przelaczniki Show gasza u zrodla.
+                        idx == 0 ? ((m_showZones ? static_cast<int>(tile->flags) : 0)
+                                   | ((m_showHouses && tile->is_house) ? 64 : 0))
                                  : 0 });
                 }
 
@@ -154,7 +167,8 @@ void MapView::appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) c
     // Potwor/NPC na kaflu (spawny): sprite outfitu z .dat (kierunek poludnie,
     // warstwa bazowa bez barwienia template - MVP). Rysowany na wierzchu stosu,
     // podniesiony o skumulowana elevation jak itemy nad podestami.
-    if (!tile->creature_name.isEmpty() && m_creatureStore && m_dat) {
+    // m_showCreatures (Show > Show creatures): quady potwora w ogole nie powstaja.
+    if (m_showCreatures && !tile->creature_name.isEmpty() && m_creatureStore && m_dat) {
         const CreatureStore::CreatureType *ct = m_creatureStore->byName(tile->creature_name);
         const ClientItem *of = (ct && ct->lookType > 0)
                                    ? m_dat->outfitByLookType(static_cast<uint16_t>(ct->lookType))
@@ -205,12 +219,16 @@ void MapView::appendTopItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out
         const int elev = elevation;            // stan PRZED tym itemem (jak w RME)
         if (ci->has_elevation) elevation += ci->elevation;
 
+        // Ta sama klatka co glowny przebieg - inaczej sylwetka zaznaczenia/duch
+        // przenoszenia odklejalyby sie od animowanego sprite'a pod spodem.
+        const int fr = itemFrame(ci);
+
         topQuads.clear();
         for (int l = 0; l < layers; ++l)
             for (int hh = 0; hh < h; ++hh)
                 for (int ww = 0; ww < w; ++ww) {
                     const uint32_t sid = cellSpriteId(ci, ww, hh, l, w, h, tile->x, tile->y,
-                                                      tile->z, item.count);
+                                                      tile->z, item.count, fr);
                     if (sid == 0) continue;
                     const int as = atlasSlotForSprite(sid);
                     if (as < 0) continue;
@@ -318,8 +336,12 @@ void MapView::storeChunkQuads(int z, quint64 key, std::vector<QuadRef> &&q)
         // NOWY wektor (nie modyfikacja w miejscu): czytelnicy trzymajacy stary
         // shared_ptr dokanczaja iteracje na starych danych - bez wyscigu.
         m_quadCache[z][key] = std::make_shared<const std::vector<QuadRef>>(std::move(q));
-        quint32 &v = m_chunkVer[z][key];   // wersja tresci: 1,2,3... (0 zarezerwowane)
-        v = (v == 0 || v == kChunkPending) ? 1 : v + 1;
+        // Wersja z GLOBALNEGO licznika - nigdy sie nie powtarza (patrz m_chunkVerCounter:
+        // per-chunkowe "1,2,3..." po wyczyszczeniu cache wracalo do 1 i zbiegalo sie z
+        // wersja trzymana przez renderer -> VBO nie byl przebudowywany).
+        if (++m_chunkVerCounter == 0 || m_chunkVerCounter == kChunkPending)
+            m_chunkVerCounter = 1;   // omin wartosci-strazniki (0 = Empty, 0xFFFFFFFF = Pending)
+        m_chunkVer[z][key] = m_chunkVerCounter;
     }
     m_quadCacheVer.fetch_add(1, std::memory_order_relaxed);   // sygnal dla MapGLView
 }
@@ -347,9 +369,11 @@ void MapView::refreshSelectionTint()
             for (quint64 ck : dirty) {
                 auto it = vit->find(ck);
                 if (it == vit->end()) continue;   // brak cache = policzy sie normalnie z flaga
-                quint32 &v = it.value();
                 // Bump wersji (quady zostaja w cache!) -> MapGLView re-uploaduje instancje.
-                v = (v == 0 || v == kChunkPending) ? 1 : v + 1;
+                // Tez z globalnego licznika - wersje nie moga sie powtarzac (patrz store).
+                if (++m_chunkVerCounter == 0 || m_chunkVerCounter == kChunkPending)
+                    m_chunkVerCounter = 1;
+                it.value() = m_chunkVerCounter;
             }
         }
     }

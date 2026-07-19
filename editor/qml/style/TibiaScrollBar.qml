@@ -9,7 +9,16 @@ Item {
     id: root
     property var flickable
     property bool dragging: false
-    visible: root.flickable && root.flickable.contentHeight > root.flickable.height
+    // contentHeight bywa chwilowo 0 (np. przy przelaczeniu tilesetu model sie
+    // czysci i wypelnia od nowa w kolejnej klatce) - bez > 0 dzielenie przez
+    // 0 w thumb.height dawalo Infinity i sie "pierdolilo" (rozjezdzajacy sie,
+    // rozciagniety kciuk/track wystajacy poza panel).
+    visible: root.flickable && root.flickable.contentHeight > 0
+             && root.flickable.contentHeight > root.flickable.height
+    // Zabezpieczenie: gdyby mimo to cos policzylo sie do NaN/Infinity/ujemnej,
+    // nic nie wyciecze poza obreb wlasnego paska (wczesniej brak clip
+    // pozwalal takiemu artefaktowi renderowac sie az poza panel palety).
+    clip: true
     width: 12
 
     // GridView/ListView maja originY, ktore po zmianie rozmiaru komorek (Icon Size)
@@ -67,8 +76,12 @@ Item {
     BorderImage {
         id: thumb
         width: 12
-        height: root.flickable
-            ? Math.max(24, track.height * (root.flickable.height / root.flickable.contentHeight))
+        // Math.max(24, ...) samo nie wystarczy - gdy contentHeight == 0 dzielenie
+        // daje Infinity, a Math.max(24, Infinity) to dalej Infinity (kciuk
+        // rozciagniety w nieskonczonosc). Explicit guard na contentHeight > 0.
+        height: (root.flickable && root.flickable.contentHeight > 0)
+            ? Math.min(track.height, Math.max(24,
+                  track.height * (root.flickable.height / root.flickable.contentHeight)))
             : 20
         source: (uiTheme.tex + "scrollbar_thumb.png")
         smooth: false

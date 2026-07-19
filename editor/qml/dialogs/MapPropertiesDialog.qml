@@ -28,8 +28,8 @@ TibiaDialog {
             Text { text: "" + mapPropsDialog.h.otbmVersion; color: "#c0c0c0"; font.pixelSize: 12 }
             Text { text: "Client version:"; color: "#999"; font.pixelSize: 12 }
             Text {
-                text: mapPropsDialog.app.loadedClientVersion > 0
-                      ? mapPropsDialog.app.versionLabel(mapPropsDialog.app.loadedClientVersion) : "?"
+                text: mapPropsDialog.app.loadedClientKey !== ""
+                      ? mapPropsDialog.app.profileLabel(mapPropsDialog.app.loadedClientKey) : "?"
                 color: "#c0c0c0"; font.pixelSize: 12
             }
             Text { text: "Items (OTB):"; color: "#999"; font.pixelSize: 12 }

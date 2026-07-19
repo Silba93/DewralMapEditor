@@ -46,6 +46,8 @@ public:
 
     // data/<wersja>/creatures.xml - opcjonalny (pusta paleta gdy brak pliku).
     Q_INVOKABLE bool loadForVersion(int version);
+    // Jak wyzej, ale z data/<dirName>/ (profile z nazwa wlasna, np. "Midhem").
+    Q_INVOKABLE bool loadForDir(const QString &dirName);
 
     int count() const { return static_cast<int>(m_creatures.size()); }
     bool hasData() const { return !m_creatures.isEmpty(); }

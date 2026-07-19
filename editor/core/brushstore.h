@@ -3,6 +3,9 @@
 
 #include <QObject>
 #include <QHash>
+#include <QJsonObject>
+#include <QVariantList>
+#include <QVariantMap>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -27,7 +30,43 @@ class BrushStore : public QObject
 public:
     explicit BrushStore(QObject *parent = nullptr);
 
+    // ===== EDYTOR BRUSHY (Tools > Brush Editor) =====
+    // Zrodlem prawdy edycji jest SUROWY JSON (m_rawRoot) wczytany z brushes.json:
+    // mutacja zmienia JSON, potem pelny reparse (jedna sciezka parsowania) i zapis
+    // atomowy (QSaveFile). Dzieki temu pola, ktorych edytor nie zna (doodady,
+    // friends, optional...), przechodza przez edycje NIETKNIETE.
+    Q_INVOKABLE QStringList groundBrushNames() const;
+    Q_INVOKABLE QStringList wallBrushNames() const;
+    // Dane ground brusha do edycji: { zorder, items: [{id, chance}...],
+    // borders: [ { to, tiles: [13 intow, indeksy BT_*] } ... ] }.
+    // "to": "" = przeciw pustce (brak sasiada), "*" = przeciw dowolnemu innemu
+    // brushowi, inaczej NAZWA konkretnego ground brusha (np. "water") - to jest
+    // mechanizm "wodny border": grunt bordera SPECYFICZNIE z wybranym brushem.
+    Q_INVOKABLE QVariantMap groundBrushEdit(const QString &name) const;
+    // Zapis (tworzy brush, gdy nie istnieje). items: [{id, chance}]; borderBlocks:
+    // [ { to, tiles: [13] } ] - kazdy blok to osobny border-do-celu (patrz wyzej).
+    // Wszystkie zapisywane jako align="outer" (border rysuje sie na NIZSZYM z-order
+    // z pary, wg z-order - patrz getBrushTo). friends/optional/hate zachowane.
+    Q_INVOKABLE bool saveGroundBrush(const QString &name, int zorder,
+                                     const QVariantList &items,
+                                     const QVariantList &borderBlocks);
+    Q_INVOKABLE void deleteGroundBrush(const QString &name);
+    // Sciany: 17 slotow (align = maska sasiadow N=1 W=2 E=4 S=8; 16 = extra),
+    // MVP: jeden item na slot. Zwraca/przyjmuje liste 17 intow (0 = pusty slot).
+    Q_INVOKABLE QVariantList wallBrushEdit(const QString &name) const;
+    Q_INVOKABLE bool saveWallBrush(const QString &name, const QVariantList &align17);
+    Q_INVOKABLE void deleteWallBrush(const QString &name);
+
+signals:
+    // Po kazdej mutacji edytora i po (re)wczytaniu pliku - odswieza comba w QML.
+    void brushesChanged();
+
+public:
+
     Q_INVOKABLE bool loadForVersion(int clientVersion);
+    // Jak wyzej, ale z data/<dirName>/ - profile z nazwa wlasna (np. "Midhem")
+    // maja wlasny katalog danych. loadForVersion = loadForDir(numer).
+    Q_INVOKABLE bool loadForDir(const QString &dirName);
     Q_INVOKABLE void clear();
     Q_INVOKABLE bool hasData() const { return !m_grounds.isEmpty(); }
 
@@ -162,6 +201,13 @@ private:
 
     QHash<QString, DoodadDef> m_doodads;
     QHash<int, QString> m_doodadByServerId;   // lookid (ikona w palecie) -> nazwa doodada
+
+    // --- Edytor brushy (patrz sekcja publiczna) ---
+    void parseRoot(const QJsonObject &root);   // wspolna sciezka parsowania
+    bool saveJson() const;                     // atomowy zapis m_rawRoot do m_path
+    void applyRawAndSave();                    // reparse + zapis + brushesChanged
+    QJsonObject m_rawRoot;                     // surowy brushes.json (zrodlo edycji)
+    QString m_path;                            // sciezka pliku (takze gdy nie istnial)
 };
 
 #endif // BRUSHSTORE_H

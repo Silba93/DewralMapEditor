@@ -3,6 +3,7 @@
 
 #include <QQuickFramebufferObject>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <atomic>
 #include "mapview.h"
 
@@ -57,6 +58,12 @@ private:
     // (albo gdy gra animacja efektu) - bez tego renderer mielil identyczne
     // klatki non stop (przy limicie 240 = 240 pustych przebiegow GPU/s idle).
     bool m_framePending = true;
+    // Zegar klatek ANIMACJI ITEMOW (500 ms jak RME ITEM_FRAME_DURATION). Tyka w
+    // sterownikach klatek (driverTick) - jednym mechanizmie z renderem, wiec nie
+    // ma jak sie rozjechac z odswiezaniem.
+    QElapsedTimer m_animClock;
+    // Wspolne cialo obu sterownikow klatek (timer przy limicie / afterAnimating).
+    void driverTick();
     QTimer m_fpsTimer;
     QTimer m_renderTimer;        // pompuje update() przy limicie FPS
 };

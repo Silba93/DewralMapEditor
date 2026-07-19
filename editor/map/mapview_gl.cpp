@@ -313,6 +313,7 @@ void MapView::glCollectSpawnMarkInstances(std::vector<float> &out, std::vector<f
     if (m_spawnMarksDirty) rebuildSpawnMarks();
     out.clear();
     outSel.clear();
+    if (!m_showSpawns) return;   // Show > Show spawns: markery znikaja (nakladka)
     // Instancje per klatka z malej listy centrow - dzieki temu podzial na
     // zaznaczone/nie reaguje na selekcje natychmiast, bez rebuildow.
     for (const SpawnCenter &c : m_spawnCentersFloor) {
@@ -330,6 +331,70 @@ void MapView::glCollectSpawnMarkInstances(std::vector<float> &out, std::vector<f
         dst.insert(dst.end(), { x0, y0, 2.0f, side });                 // lewo
         dst.insert(dst.end(), { x0 + side - 2, y0, 2.0f, side });      // prawo
     }
+}
+
+void MapView::glCollectGridInstances(std::vector<float> &out)
+{
+    out.clear();
+    // Przy mocnym oddaleniu (kafle < 8 px) siatka bylaby gestsza niz tresc - pomijamy
+    // (jak RME, ktore przy malym zoomie i tak rysuje sam kolor podlogi).
+    if (!m_showGrid || m_tileSize < 8) return;
+
+    const double ts = std::max(1, m_tileSize);
+    const int tx0 = static_cast<int>(std::floor(m_originX)) - 1;
+    const int ty0 = static_cast<int>(std::floor(m_originY)) - 1;
+    const int tw = static_cast<int>(std::ceil(width() / ts)) + 3;
+    const int th = static_cast<int>(std::ceil(height() / ts)) + 3;
+    if (tw <= 0 || th <= 0) return;
+
+    // Grubosc linii = 1 px EKRANU przeliczony na world px (32 world px = ts px ekranu).
+    const float thick = 32.0f / static_cast<float>(m_tileSize);
+    const float x0 = tx0 * 32.0f, y0 = ty0 * 32.0f;
+    const float wpx = tw * 32.0f, hpx = th * 32.0f;
+
+    out.reserve(static_cast<size_t>(tw + th + 2) * 4);
+    for (int i = 0; i <= tw; ++i)
+        out.insert(out.end(), { x0 + i * 32.0f, y0, thick, hpx });   // pionowe
+    for (int j = 0; j <= th; ++j)
+        out.insert(out.end(), { x0, y0 + j * 32.0f, wpx, thick });   // poziome
+}
+
+void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vector<float> &outZone)
+{
+    outHouse.clear();
+    outZone.clear();
+    // showZonesAlways (RME "Always show zones"): kwadraty na PUSTYCH kaflach da
+    // sie wylaczyc osobno - strefy na podlodze (tint quadow) zostaja bez zmian.
+    if (!m_otbm || !m_showZonesAlways || (!m_showZones && !m_showHouses)) return;
+
+    // Widoczny zakres kafli biezacego pietra (jak grid), po chunkach indeksu.
+    const double ts = std::max(1, m_tileSize);
+    const int tx0 = static_cast<int>(std::floor(m_originX)) - 1;
+    const int ty0 = static_cast<int>(std::floor(m_originY)) - 1;
+    const int tx1 = tx0 + static_cast<int>(std::ceil(width() / ts)) + 3;
+    const int ty1 = ty0 + static_cast<int>(std::ceil(height() / ts)) + 3;
+
+    auto zit = m_floorChunkTiles.constFind(m_floor);
+    if (zit == m_floorChunkTiles.cend()) return;
+
+    const int cx0 = floorDiv(tx0, kChunkTiles), cx1 = floorDiv(tx1, kChunkTiles);
+    const int cy0 = floorDiv(ty0, kChunkTiles), cy1 = floorDiv(ty1, kChunkTiles);
+    for (int cy = cy0; cy <= cy1; ++cy)
+        for (int cx = cx0; cx <= cx1; ++cx) {
+            auto cit = zit->constFind(chunkKey(cx, cy));
+            if (cit == zit->cend()) continue;
+            for (const OtbmTile *t : cit.value()) {
+                if (!t || !t->items.empty()) continue;   // z itemami tintuje quad spodu
+                if (t->x < tx0 || t->x > tx1 || t->y < ty0 || t->y > ty1) continue;
+                if (m_showHouses && t->is_house) {
+                    outHouse.insert(outHouse.end(),
+                                    { t->x * 32.0f, t->y * 32.0f, 32.0f, 32.0f });
+                } else if (m_showZones && t->flags != 0) {
+                    outZone.insert(outZone.end(),
+                                   { t->x * 32.0f, t->y * 32.0f, 32.0f, 32.0f });
+                }
+            }
+        }
 }
 
 void MapView::glCollectBrushCursorInstances(std::vector<float> &out)

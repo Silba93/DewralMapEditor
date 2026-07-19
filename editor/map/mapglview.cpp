@@ -220,6 +220,15 @@ public:
             }
         }
 
+        // Siatka kafli (Show grid) - linie jako plaskie rect-y, format jak kursor.
+        src->glCollectGridInstances(m_gridInst);
+        uploadDyn(m_gridVbo, m_gridInst, m_gridCount);
+
+        // Kafle stref/domow bez itemow - plaskie kwadraty (patrz MapView).
+        src->glCollectZoneMarkInstances(m_zoneHouseInst, m_zoneFlagInst);
+        uploadDyn(m_zoneHouseVbo, m_zoneHouseInst, m_zoneHouseCount);
+        uploadDyn(m_zoneFlagVbo, m_zoneFlagInst, m_zoneFlagCount);
+
         // Markery spawnow (centrum + obrys promienia) - ten sam format i program co
         // kursor, osobne VBO i kolory (fiolet; zaznaczone przyciemnione jak itemy).
         src->glCollectSpawnMarkInstances(m_spawnInst, m_spawnSelInst);
@@ -261,6 +270,15 @@ public:
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glClearColor(0.07f, 0.08f, 0.10f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        // FBO ma byc KRYJACE wszedzie (alpha=1 z clear) - blokujemy zapisy alpha na
+        // CALY render. Bez tego krawedzie sprite'ow przy filtrze LINEAR (ulamkowy
+        // zoom) zapisywaly ulamkowa alphe (dst_a = a^2 + dst*(1-a) < 1 nawet nad
+        // kryjacym groundem), a Qt Quick komponuje FBO nad kamiennym panelem - kazdy
+        // texel z alpha<1 przepuszczal jasna teksture panelu. Za dnia niewidoczne,
+        // noca (lighting) wychodzilo jako BIALE OBRYSY na krawedziach itemow.
+        // Maska nie psuje blendingu: wspolczynniki SRC_ALPHA biora alphe FRAGMENTU,
+        // ColorMask gate'uje tylko ZAPIS do bufora.
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
         if (!m_prog || !m_prog->isLinked() || !m_tex) return;
 
@@ -340,18 +358,14 @@ public:
             m_flatProg->setUniformValue("uMatrix", identity);
             m_flatProg->setUniformValue("uRect", QVector4D(-1.0f, -1.0f, 1.0f, 1.0f));
             m_flatProg->setUniformValue("uColor", QVector4D(0.0f, 0.0f, 0.0f, 128.0f / 255.0f));
-            // NIE pisz do kanalu alpha FBO: shade (alpha 0.5, blend SRC_ALPHA) obnizalby
-            // alpha calego FBO, przez co przy kompozycji Qt Quick przeswitywalaby tekstura
-            // panelu POD mapa (mapPanel). Alpha ma zostac 1.0 (kryjace), tylko RGB
-            // przyciemnione. To samo dotyczy pol-przezroczystych nakladek nizej.
-            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+            // Maska alpha jest juz ustawiona GLOBALNIE na poczatku render() (patrz
+            // komentarz przy glClear) - shade nie musi nia zarzadzac.
             m_flatVao.bind();
             m_quadVbo.bind();
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), nullptr);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             m_flatVao.release();
-            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             m_flatProg->release();
 
             // Wracamy do programu/VAO sprite'ow - flatVao.release() odwiazuje VAO (0),
@@ -484,6 +498,14 @@ public:
             m_vao.release();
             m_cursorProg->release();
         };
+        // Kafle stref/domow bez itemow: kolory zblizone do tintu shadera (dom =
+        // niebieskawy, strefa = zielonkawy PZ; szczegolowe flagi i tak widac dopiero
+        // gdy kafel dostanie podloge). POD siatka i markerami spawnow.
+        drawSpawnMarks(m_zoneHouseVbo, m_zoneHouseCount, QVector4D(0.25f, 0.35f, 0.9f, 0.26f));
+        drawSpawnMarks(m_zoneFlagVbo, m_zoneFlagCount, QVector4D(0.2f, 0.75f, 0.3f, 0.20f));
+
+        // Siatka POD markerami spawnow (siatka to najnizsza nakladka edytorska).
+        drawSpawnMarks(m_gridVbo, m_gridCount, QVector4D(0.0f, 0.0f, 0.0f, 0.35f));
         drawSpawnMarks(m_spawnVbo, m_spawnCount, QVector4D(0.72f, 0.35f, 0.86f, 0.45f));
         drawSpawnMarks(m_spawnSelVbo, m_spawnSelCount, QVector4D(0.36f, 0.17f, 0.43f, 0.6f));
 
@@ -506,6 +528,10 @@ public:
             m_vao.release();
             m_cursorProg->release();
         }
+
+        // Przywroc pelna maske kolorow - nie zostawiamy zmienionego stanu GL po sobie
+        // (Qt Quick wspoldzieli kontekst z wlasnym rendererem scene grapha).
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
 
 private:
@@ -753,6 +779,17 @@ private:
     QOpenGLBuffer m_spawnSelVbo;       // markery ZAZNACZONYCH spawnow (przyciemnione)
     std::vector<float> m_spawnSelInst;
     int m_spawnSelCount = 0;
+    QOpenGLBuffer m_gridVbo;           // siatka kafli (Show grid) - linie jako plaskie rect-y
+    std::vector<float> m_gridInst;
+    int m_gridCount = 0;
+    // Kafle stref/domow BEZ itemow - plaskie kolorowe kwadraty (tint quadow nie ma
+    // sie tam na czym zawiesic; patrz glCollectZoneMarkInstances).
+    QOpenGLBuffer m_zoneHouseVbo;
+    std::vector<float> m_zoneHouseInst;
+    int m_zoneHouseCount = 0;
+    QOpenGLBuffer m_zoneFlagVbo;
+    std::vector<float> m_zoneFlagInst;
+    int m_zoneFlagCount = 0;
 
     // Oswietlenie (jak TIME): tekstura 1px=1kafel nakladana multiply na mape.
     QOpenGLShaderProgram *m_lightProg = nullptr;
@@ -797,13 +834,8 @@ MapGLView::MapGLView(QQuickItem *parent)
     m_fpsTimer.start();
 
     m_renderTimer.setTimerType(Qt::PreciseTimer);
-    // Render tylko gdy cos sie zmienilo (dirty) albo gra animacja efektu -
-    // bezwarunkowy update() co tick mielil CPU/GPU na identycznych klatkach idle.
-    connect(&m_renderTimer, &QTimer::timeout, this, [this] {
-        if (!isVisible()) return;
-        const bool animating = m_source && m_source->hasActiveEffects();
-        if (m_framePending || animating) { m_framePending = false; update(); }
-    });
+    m_animClock.start();
+    connect(&m_renderTimer, &QTimer::timeout, this, [this] { driverTick(); });
 }
 
 QQuickFramebufferObject::Renderer *MapGLView::createRenderer() const
@@ -835,6 +867,30 @@ void MapGLView::setSource(MapView *s)
     update();
 }
 
+// Wspolne cialo obu sterownikow klatek (timer przy limicie FPS / afterAnimating).
+// Render tylko gdy cos sie zmienilo (dirty) albo gra JAKAS animacja (efekt
+// magiczny / wlaczone animacje itemow) - bezwarunkowy update() co tick mielil
+// CPU/GPU na identycznych klatkach idle.
+//
+// ANIMACJE ITEMOW: klatka tyka TUTAJ (co >=500 ms, RME ITEM_FRAME_DURATION), nie
+// wlasnym QTimerem MapView. Powod: rytm klatek jedzie na dokladnie tym samym
+// mechanizmie co render - wczesniej osobny timer + sztafeta dirty->pending->
+// wymuszone klatki bywaly zawodne w bezczynnosci i itemy tykaly dopiero przy
+// ruchu myszy / malowaniu (kazdy sync "przy okazji" dociagal nowe quady).
+// animTick() podbija licznik klatek i uniewaznia cache quadow; update() zaraz
+// potem gwarantuje sync, ktory zleci przeliczenie widocznych chunkow workerowi.
+void MapGLView::driverTick()
+{
+    if (!isVisible()) return;
+    const bool itemAnims = m_source && m_source->showAnimations();
+    if (itemAnims && m_animClock.elapsed() >= 500) {
+        m_animClock.restart();
+        m_source->animTick();   // ++klatka + inwalidacja quadow (emituje contentUpdated)
+    }
+    const bool animating = itemAnims || (m_source && m_source->hasActiveEffects());
+    if (m_framePending || animating) { m_framePending = false; update(); }
+}
+
 void MapGLView::setMaxFps(int v)
 {
     v = qMax(0, v);
@@ -861,13 +917,10 @@ void MapGLView::updateRenderDriver()
 
     if (m_maxFps <= 0) {
         // Bez limitu tez dirty-gating: afterAnimating podtrzymuje petle renderu
-        // tylko dopoki cos sie dzieje (pending/efekty); potem okno idzie spac,
-        // a nastepny contentUpdated budzi je bezposrednim update().
-        m_frameConn = connect(window(), &QQuickWindow::afterAnimating, this, [this] {
-            if (!isVisible()) return;
-            const bool animating = m_source && m_source->hasActiveEffects();
-            if (m_framePending || animating) { m_framePending = false; update(); }
-        });
+        // tylko dopoki cos sie dzieje (pending/efekty/animacje itemow); potem okno
+        // idzie spac, a nastepny contentUpdated budzi je bezposrednim update().
+        m_frameConn = connect(window(), &QQuickWindow::afterAnimating,
+                              this, [this] { driverTick(); });
     } else {
         m_renderTimer.setInterval(qMax(1, 1000 / m_maxFps));
         m_renderTimer.start();

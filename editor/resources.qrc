@@ -15,6 +15,7 @@
         <file alias="qml/dialogs/SelectionItemDialog.qml">qml/dialogs/SelectionItemDialog.qml</file>
         <file alias="qml/dialogs/ThemeDialog.qml">qml/dialogs/ThemeDialog.qml</file>
         <file alias="qml/dialogs/NewMapDialog.qml">qml/dialogs/NewMapDialog.qml</file>
+        <file alias="qml/dialogs/BrushEditorDialog.qml">qml/dialogs/BrushEditorDialog.qml</file>
         <file alias="qml/style/TibiaButton.qml">qml/style/TibiaButton.qml</file>
         <file alias="qml/style/TibiaPanel.qml">qml/style/TibiaPanel.qml</file>
         <file alias="qml/style/TibiaDialogBackground.qml">qml/style/TibiaDialogBackground.qml</file>

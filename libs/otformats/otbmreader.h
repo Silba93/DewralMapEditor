@@ -353,6 +353,16 @@ public:
     // Zapis do OTBM wychodzi tylko dla count > 1 (patrz writeMapItem).
     bool setTopItemCount(int x, int y, int z, uint16_t count);
 
+    // --- Atrybuty WIERZCHNIEGO itemu (okno Properties), kazdy = jedno cofniecie ---
+    // Odpowiedniki pol z OtbmItemExtra. Wartosc 0 / pusty string KASUJE atrybut
+    // (wtedy writeMapItem go nie zapisze) - jak RME, gdzie wyzerowane pole znika.
+    // Czy dany atrybut ma sens dla tego itemu (writable/teleport), ocenia wolajacy.
+    bool setTopItemActionId(int x, int y, int z, uint16_t actionId);
+    bool setTopItemUniqueId(int x, int y, int z, uint16_t uniqueId);
+    bool setTopItemText(int x, int y, int z, const QString &text);
+    // Cel teleportu. Ujemne wspolrzedne (lub z poza 0..15) = skasuj atrybut.
+    bool setTopItemTeleport(int x, int y, int z, int destX, int destY, int destZ);
+
     // Ile itemow o danym server-id na kafelku, wliczajac zawartosc kontenerow.
     int countItemsOnTile(int x, int y, int z, int serverId) const;
 
@@ -412,6 +422,9 @@ private:
     int countItems(const OtbmMapItem &item) const;
 
     void rebuildPosIndex();
+    // Wspolny szkielet setterow atrybutow wierzchniego itemu (patrz .cpp).
+    template <typename Mut>
+    bool mutateTopItem(int x, int y, int z, Mut mut);
     OtbmTile *getOrCreateTileRaw(int x, int y, int z); // bez undo (load spawns.xml)
     OtbmTile *tileForSpawnEdit(int x, int y, int z);   // kafel pod spawn (tworzy + undo)
 

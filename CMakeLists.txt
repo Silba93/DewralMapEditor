@@ -36,7 +36,16 @@ add_library(OTFormats STATIC
     libs/otformats/itemtype.h
     libs/otformats/otfireader.cpp
     libs/otformats/otfireader.h
+    libs/otformats/itemsxmlreader.cpp
+    libs/otformats/itemsxmlreader.h
+    libs/otformats/dmedatadir.h
 )
+
+# Katalog data/ ze ZRODEL - aplikacja czyta i zapisuje bezposrednio tam (patrz
+# dmedatadir.h). Bez tego edycje palet/brushy ladowaly w build/data/ i kazdy
+# rebuild nadpisywal je kopia ze zrodel.
+target_compile_definitions(OTFormats PUBLIC
+    DME_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
 
 target_link_libraries(OTFormats
     PUBLIC
@@ -83,6 +92,8 @@ add_executable(DewralMapEditor
     editor/map/mapview_p.h
     editor/map/mapglview.cpp
     editor/map/mapglview.h
+    editor/map/minimapview.cpp
+    editor/map/minimapview.h
     editor/resources.qrc
 )
 
@@ -96,7 +107,18 @@ target_link_libraries(DewralMapEditor
 )
 
 # Binarka nazywa sie DME.exe (skrot), a nie DewralMapEditor.exe.
-set_target_properties(DewralMapEditor PROPERTIES OUTPUT_NAME "DME")
+# WIN32_EXECUTABLE - bez tego Windows buduje ja jako aplikacje konsolowa i
+# przy kazdym uruchomieniu .exe otwiera sie obok czarne okno terminala.
+# RUNTIME_OUTPUT_DIRECTORY - exe (a wraz z nim DLL-ki z windeployqt i folder
+# data/, bo obie komendy nizej celuja w TARGET_FILE_DIR) laduje zawsze w
+# stalym "dist/" w korzeniu repo, niezalezne od folderu builda Qt Creatora.
+# Kazdy build po prostu AKTUALIZUJE gotowa, przenosna paczke w tym miejscu.
+set_target_properties(DewralMapEditor PROPERTIES
+    OUTPUT_NAME "DME"
+    WIN32_EXECUTABLE TRUE
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/dist"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/dist")
 
 # -----------------------------------------------------------------------------
 # Kopiuje folder data/ (brushes.json + tilesets.json per wersja klienta) obok
@@ -107,3 +129,27 @@ add_custom_command(TARGET DewralMapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:DewralMapEditor>/data"
 )
+
+# -----------------------------------------------------------------------------
+# windeployqt (Windows): kopiuje biblioteki Qt + MODULY QML obok DME.exe. Bez tego
+# uruchomienie exe poza Qt Creatorem zglasza "module QtQuick.Controls is not
+# installed" - same DLL-ki nie wystarcza, potrzebne sa zdeployowane qmldir.
+# --qmldir wskazuje nasze QML, zeby windeployqt wykryl UZYWANE moduly.
+# -----------------------------------------------------------------------------
+if(WIN32)
+    get_target_property(_qmake_exe Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_qt_bin_dir "${_qmake_exe}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin_dir}")
+    if(WINDEPLOYQT_EXE)
+        add_custom_command(TARGET DewralMapEditor POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXE}"
+                    --qmldir "${CMAKE_SOURCE_DIR}/editor/qml"
+                    --no-translations
+                    "$<TARGET_FILE:DewralMapEditor>"
+            COMMENT "windeployqt: biblioteki Qt + moduly QML obok DME.exe"
+            VERBATIM)
+    else()
+        message(WARNING "windeployqt nie znaleziony - release exe moze nie wstac "
+                        "poza Qt Creatorem (brak modulow QML). Uruchom windeployqt recznie.")
+    endif()
+endif()

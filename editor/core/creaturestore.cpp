@@ -1,5 +1,7 @@
 #include "creaturestore.h"
 
+#include "dmedatadir.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -14,10 +16,15 @@ CreatureStore::CreatureStore(QObject *parent)
 
 bool CreatureStore::loadForVersion(int version)
 {
+    return loadForDir(QString::number(version));
+}
+
+bool CreatureStore::loadForDir(const QString &dirName)
+{
     beginResetModel();
     m_creatures.clear();
-    const QString path = QDir(QCoreApplication::applicationDirPath())
-                             .filePath(QStringLiteral("data/%1/creatures.xml").arg(version));
+    const QString path = QDir(dmeDataDir())
+                             .filePath(QStringLiteral("%1/creatures.xml").arg(dirName));
     const bool ok = QFile::exists(path) && loadFile(path);
     std::sort(m_creatures.begin(), m_creatures.end(),
               [](const CreatureType &a, const CreatureType &b) {
