@@ -1,15 +1,12 @@
+import Tibia 1.0
 import QtQuick
 
-// Przycisk w stylu classic Tibia UI (zrodlo tekstury: TibiaClient data/images/ui/buttons.png,
-// wartosci 1:1 z data/styles/10-buttons.otui -> Button: image-border=1, stany wykrojone
-// offline do button_normal.png / button_active.png, patrz editor/ui/).
 Item {
     id: root
-    signal clicked()
+    signal clicked
     property alias text: label.text
-    // "enabled" NIE deklarujemy - Item juz je ma wbudowane (redeklaracja kolidowalaby
-    // z wbudowanym sygnalem enabledChanged, jak przy "text"/"textChanged" w TibiaTextField).
-    property bool checked: false   // np. przelaczniki "Show shade" - traktowane jak wcisniety
+
+    property bool checked: false
 
     implicitWidth: Math.max(60, label.implicitWidth + 16)
     implicitHeight: 22
@@ -19,9 +16,14 @@ Item {
 
     BorderImage {
         anchors.fill: parent
-        source: root.active ? (uiTheme.tex + "button_active.png") : (uiTheme.tex + "button_normal.png")
+        source: root.active ? (Backend.uiTheme.tex + "button_active.png") : (Backend.uiTheme.tex + "button_normal.png")
         smooth: false
-        border { left: 1; right: 1; top: 1; bottom: 1 }
+        border {
+            left: 1
+            right: 1
+            top: 1
+            bottom: 1
+        }
     }
 
     Text {

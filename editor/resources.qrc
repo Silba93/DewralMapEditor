@@ -7,6 +7,15 @@
         <file alias="qml/Main.qml">qml/Main.qml</file>
         <file alias="qml/PalettePanel.qml">qml/PalettePanel.qml</file>
         <file alias="qml/StartupWindow.qml">qml/StartupWindow.qml</file>
+        <file alias="qml/controllers/AppSettings.qml">qml/controllers/AppSettings.qml</file>
+        <file alias="qml/controllers/AppController.qml">qml/controllers/AppController.qml</file>
+        <file alias="qml/controllers/ClientProfileController.qml">qml/controllers/ClientProfileController.qml</file>
+        <file alias="qml/controllers/DocumentController.qml">qml/controllers/DocumentController.qml</file>
+        <file alias="qml/controllers/PaletteController.qml">qml/controllers/PaletteController.qml</file>
+        <file alias="qml/components/DocumentTabs.qml">qml/components/DocumentTabs.qml</file>
+        <file alias="qml/components/EditorToolBar.qml">qml/components/EditorToolBar.qml</file>
+        <file alias="qml/components/MapWorkspace.qml">qml/components/MapWorkspace.qml</file>
+        <file alias="qml/components/MainMenuBar.qml">qml/components/MainMenuBar.qml</file>
         <file alias="qml/dialogs/TownsDialog.qml">qml/dialogs/TownsDialog.qml</file>
         <file alias="qml/dialogs/GoToPositionDialog.qml">qml/dialogs/GoToPositionDialog.qml</file>
         <file alias="qml/dialogs/MapStatsDialog.qml">qml/dialogs/MapStatsDialog.qml</file>

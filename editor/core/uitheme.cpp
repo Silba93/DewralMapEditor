@@ -7,31 +7,27 @@
 
 namespace {
 
-// Klucz w QSettings (org/app ustawione w main.cpp).
 const char *kTintKey = "ui/tint";
 const char *kStyleKey = "ui/style";
 
-// Paleta stylu FLAT (GitHub dark): tla, ramka, stany interakcji.
 namespace flat {
-const QColor bg       ("#161b22");   // panel/menu/przycisk tab
-const QColor bgDeep   ("#0d1117");   // pola tekstowe (wpuszczone)
-const QColor button   ("#21262d");   // przycisk normal
+const QColor bg       ("#161b22");
+const QColor bgDeep   ("#0d1117");
+const QColor button   ("#21262d");
 const QColor hover    ("#262c36");
-const QColor pressed  ("#1b1f24");   // active/pressed/checked
-const QColor titleBar ("#1c2128");   // pasek tytulu okien (popupwindow top-border)
+const QColor pressed  ("#1b1f24");
+const QColor titleBar ("#1c2128");
 const QColor border   ("#30363d");
-const QColor accent   ("#2d4a77");   // ramka stanu zaznaczonego (tab_checked itp.)
-const QColor glyph    ("#8b949e");   // strzalki spinboxa
-} // namespace flat
+const QColor accent   ("#2d4a77");
+const QColor glyph    ("#8b949e");
+}
 
 struct Preset { const char *name; const char *color; };
 
-// Kolory dobrane pod MNOZENIE na szaro-brazowych teksturach: swiadomie jasne, bo
-// mnozenie i tak je przyciemni. Ciemniejsze wartosci daja czarne, nieczytelne panele.
 const Preset kPresets[] = {
-    { "Klasyczny",  "#ffffff" },   // biel = tekstura bez zmian
+    { "Klasyczny",  "#ffffff" },
     { "Zielony",    "#8fd08f" },
-    { "Niebieski",  "#8fa8e0" },
+    { "Blue",       "#8fa8e0" },
     { "Czerwony",   "#e08f8f" },
     { "Fioletowy",  "#b78fe0" },
     { "Zloty",      "#e0c88f" },
@@ -39,7 +35,7 @@ const Preset kPresets[] = {
     { "Grafitowy",  "#9a9aa5" },
 };
 
-} // namespace
+}
 
 UiTheme::UiTheme(QObject *parent)
     : QObject(parent)
@@ -69,7 +65,7 @@ void UiTheme::setStyle(const QString &s)
         if (m_style == v) return;
         m_style = v;
     }
-    ++m_version;   // nowy prefiks URL -> QML przeladuje WSZYSTKIE tekstury
+    ++m_version;
     QSettings().setValue(QLatin1String(kStyleKey), v);
     emit themeChanged();
 }
@@ -92,8 +88,6 @@ QImage UiTheme::flatTexture(const QString &file) const
 {
     const QString f = file.toLower();
 
-    // Ramka 1px + wypelnienie; rozmiar 24x24 wystarcza BorderImage (tnie 1-2px
-    // marginesy i kafelkuje/rozciaga srodek).
     auto boxImage = [](const QColor &fill, const QColor &borderCol,
                        int w = 24, int h = 24) {
         QImage img(w, h, QImage::Format_ARGB32);
@@ -104,9 +98,6 @@ QImage UiTheme::flatTexture(const QString &file) const
         return img;
     };
 
-    // --- Specjalne przypadki -------------------------------------------------
-    // Okna dialogow: gorny margines (27 / 45 px) to pasek tytulu - inny odcien
-    // i linia oddzielajaca, zeby naglowek dalej sie odcinal jak w classic.
     if (f.startsWith(QLatin1String("popupwindow"))) {
         const bool tall = f.contains(QLatin1String("tall"));
         const int top = tall ? 45 : 27;
@@ -117,7 +108,7 @@ QImage UiTheme::flatTexture(const QString &file) const
         p.drawLine(1, top, img.width() - 2, top);
         return img;
     }
-    // Strzalki spinboxa: 10x11, trojkat w gore/dol, stany po nazwie.
+
     if (f.startsWith(QLatin1String("spinbox_"))) {
         const bool up = f.contains(QLatin1String("up"));
         QColor bg = flat::button;
@@ -132,20 +123,19 @@ QImage UiTheme::flatTexture(const QString &file) const
         else    p.drawPolygon(QPolygon({ {2, 3}, {7, 3}, {4, 7} }));
         return img;
     }
-    // Separatory: cienka linia.
+
     if (f.startsWith(QLatin1String("separator"))) {
         QImage img(4, 4, QImage::Format_ARGB32);
         img.fill(flat::border);
         return img;
     }
-    // Kafelkowane tlo menu (texture.png): plaskie, bez ramki.
+
     if (f == QLatin1String("texture.png")) {
         QImage img(16, 16, QImage::Format_ARGB32);
         img.fill(flat::bg);
         return img;
     }
 
-    // --- Regula ogolna: baza po rodzaju pliku, stan po slowach w nazwie ------
     QColor fill = flat::bg;
     QColor borderCol = flat::border;
     if (f.contains(QLatin1String("textedit"))) fill = flat::bgDeep;
@@ -156,7 +146,7 @@ QImage UiTheme::flatTexture(const QString &file) const
     if (f.contains(QLatin1String("pressed")) || f.contains(QLatin1String("active"))
         || f.contains(QLatin1String("checked")) || f.contains(QLatin1String("selected"))) {
         fill = flat::pressed;
-        borderCol = flat::accent;   // stan wybrany dostaje akcentowa ramke
+        borderCol = flat::accent;
     }
 
     return boxImage(fill, borderCol);
@@ -178,7 +168,7 @@ void UiTheme::setTint(const QColor &c)
         }
         m_tint = v;
     }
-    ++m_version;   // nowy prefiks URL -> QML przeladuje tekstury z pominieciem cache
+    ++m_version;
     QSettings().setValue(QLatin1String(kTintKey), v.name());
     emit themeChanged();
 }
@@ -210,8 +200,6 @@ QImage UiTheme::texture(const QString &file) const
         style = m_style;
     }
 
-    // Styl FLAT: tekstura syntetyzowana (te same nazwy i metryki border co
-    // classic - QML nie wie o niczym). Tint multiply dziala takze na flat.
     QImage img = (style == QLatin1String("flat"))
                      ? flatTexture(file)
                      : QImage(QStringLiteral(":/ui/") + file);
@@ -219,12 +207,9 @@ QImage UiTheme::texture(const QString &file) const
         return img;
     }
     if (t == QColor(Qt::white)) {
-        return img;   // brak przebarwienia - oddaj oryginal
+        return img;
     }
 
-    // ARGB32 (NIE premultiplied): kanaly RGB sa wtedy "proste", wiec mnozenie nie
-    // wymaga uwzgledniania alpha. Recznie zamiast QPainter+CompositionMode_Multiply,
-    // bo tam mnozenie miesza sie z alpha tla i zjadaloby przezroczystosc pixel-artu.
     img = img.convertToFormat(QImage::Format_ARGB32);
     const int tr = t.red();
     const int tg = t.green();
@@ -236,13 +221,11 @@ QImage UiTheme::texture(const QString &file) const
             line[x] = qRgba(qRed(c) * tr / 255,
                             qGreen(c) * tg / 255,
                             qBlue(c) * tb / 255,
-                            qAlpha(c));   // alpha nietknieta - ksztalt/bordery zostaja
+                            qAlpha(c));
         }
     }
     return img;
 }
-
-// -----------------------------------------------------------------------------
 
 UiThemeImageProvider::UiThemeImageProvider(UiTheme *theme)
     : QQuickImageProvider(QQuickImageProvider::Image)
@@ -252,7 +235,7 @@ UiThemeImageProvider::UiThemeImageProvider(UiTheme *theme)
 
 QImage UiThemeImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
 {
-    // id = "<wersja>/<plik.png>" - wersja jest tylko cache-busterem, pomijamy ja.
+
     const int slash = id.indexOf(QLatin1Char('/'));
     const QString file = (slash >= 0) ? id.mid(slash + 1) : id;
 
@@ -260,8 +243,7 @@ QImage UiThemeImageProvider::requestImage(const QString &id, QSize *size, const 
     if (size) {
         *size = img.size();
     }
-    // requestedSize celowo ignorowane: to pixel-art dla BorderImage, ktory sam tnie
-    // marginesy - przeskalowanie tutaj rozjechaloby bordery.
+
     Q_UNUSED(requestedSize);
     return img;
 }

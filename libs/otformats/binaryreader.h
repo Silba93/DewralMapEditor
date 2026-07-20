@@ -7,14 +7,6 @@
 #include <cstdint>
 #include <vector>
 
-// -----------------------------------------------------------------------------
-// BinaryReader
-//
-// Przeniesiony 1:1 (ten sam interfejs publiczny) z MapEditor::IO::BinaryReader
-// z repo tibia-imgui-map-editor, na bazie QFile zamiast std::ifstream.
-// Uzywany przez DatReaderBase/DatReaderV755 dokladnie tak samo jak oryginal.
-// -----------------------------------------------------------------------------
-
 class BinaryReader
 {
 public:
@@ -38,8 +30,8 @@ public:
     int16_t readS16();
     int32_t readS32();
 
-    QString readString();              // length-prefixed (uint16 len)
-    QString readString(size_t length); // fixed-length
+    QString readString();
+    QString readString(size_t length);
 
     std::vector<uint8_t> readBytes(size_t count);
 
@@ -65,4 +57,4 @@ private:
     QString m_errorMessage;
 };
 
-#endif // BINARYREADER_H
+#endif

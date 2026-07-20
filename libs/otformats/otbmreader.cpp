@@ -2,6 +2,7 @@
 
 #include "nodefilereader.h"
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QSaveFile>
@@ -14,8 +15,6 @@
 
 namespace {
 
-// Zapis drzewa node'ow OTBM. Markery 0xFE/0xFF surowe; bajty danych z escapem
-// 0xFD (gdy rowne 0xFD/0xFE/0xFF) - odwrotnosc NodeFileReader.
 struct NodeWriter {
     QByteArray buf;
     void raw(uint8_t b) { buf.append(static_cast<char>(b)); }
@@ -25,6 +24,9 @@ struct NodeWriter {
     }
     void u16(uint16_t v) { data(v & 0xFF); data((v >> 8) & 0xFF); }
     void u32(uint32_t v) { data(v & 0xFF); data((v >> 8) & 0xFF); data((v >> 16) & 0xFF); data((v >> 24) & 0xFF); }
+    void bytes(const QByteArray &value) {
+        for (char byte : value) data(static_cast<uint8_t>(byte));
+    }
     void str(const QString &s) {
         const QByteArray b = s.toLatin1();
         u16(static_cast<uint16_t>(b.size()));
@@ -34,27 +36,111 @@ struct NodeWriter {
     void end() { raw(0xFF); }
 };
 
+void appendU32(QByteArray &out, uint32_t value)
+{
+    out.append(static_cast<char>(value & 0xFF));
+    out.append(static_cast<char>((value >> 8) & 0xFF));
+    out.append(static_cast<char>((value >> 16) & 0xFF));
+    out.append(static_cast<char>((value >> 24) & 0xFF));
+}
+
+uint32_t rawU32(const QByteArray &raw)
+{
+    const auto *p = reinterpret_cast<const uchar *>(raw.constData());
+    return static_cast<uint32_t>(p[0])
+         | (static_cast<uint32_t>(p[1]) << 8)
+         | (static_cast<uint32_t>(p[2]) << 16)
+         | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+QByteArray integerAttributeValue(int32_t value)
+{
+    QByteArray raw;
+    appendU32(raw, static_cast<uint32_t>(value));
+    return raw;
+}
+
+QByteArray stringAttributeValue(const QString &value)
+{
+    const QByteArray bytes = value.toLatin1();
+    QByteArray raw;
+    appendU32(raw, static_cast<uint32_t>(bytes.size()));
+    raw.append(bytes);
+    return raw;
+}
+
+bool isManagedAttribute(const OtbmItemExtra::NamedAttribute &attribute)
+{
+    if (attribute.type == 2) {
+        return attribute.key == QByteArrayLiteral("aid")
+            || attribute.key == QByteArrayLiteral("uid")
+            || attribute.key == QByteArrayLiteral("tier");
+    }
+    if (attribute.type == 1) {
+        return attribute.key == QByteArrayLiteral("text")
+            || attribute.key == QByteArrayLiteral("desc");
+    }
+    return false;
+}
+
+void writeAttributeMap(NodeWriter &w, const OtbmMapItem &item)
+{
+    const OtbmItemExtra &extra = *item.extra;
+    std::vector<OtbmItemExtra::NamedAttribute> attributes;
+    attributes.reserve(extra.attribute_map.size() + 5);
+
+    for (const auto &attribute : extra.attribute_map) {
+        if (!isManagedAttribute(attribute)) attributes.push_back(attribute);
+    }
+    auto addInteger = [&attributes](const char *key, uint32_t value) {
+        if (value == 0) return;
+        attributes.push_back({QByteArray(key), 2,
+                              integerAttributeValue(static_cast<int32_t>(value))});
+    };
+    auto addString = [&attributes](const char *key, const QString &value) {
+        if (value.isEmpty()) return;
+        attributes.push_back({QByteArray(key), 1, stringAttributeValue(value)});
+    };
+
+    addInteger("aid", item.action_id);
+    addInteger("uid", item.unique_id);
+    addString("text", extra.text);
+    addString("desc", extra.description);
+    addInteger("tier", extra.tier);
+
+    w.data(static_cast<uint8_t>(OtbmAttribute::AttributeMap));
+    w.u16(static_cast<uint16_t>(attributes.size()));
+    for (const auto &attribute : attributes) {
+        w.u16(static_cast<uint16_t>(attribute.key.size()));
+        w.bytes(attribute.key);
+        w.data(attribute.type);
+        w.bytes(attribute.value_raw);
+    }
+}
+
 void writeMapItem(NodeWriter &w, const OtbmMapItem &item)
 {
     w.start(static_cast<uint8_t>(OtbmNode::Item));
     w.u16(item.server_id);
+    const bool useAttributeMap = item.extra && item.extra->has_attribute_map;
     if (item.count > 1) {
         w.data(static_cast<uint8_t>(OtbmAttribute::Count));
         w.data(static_cast<uint8_t>(item.count > 255 ? 255 : item.count));
     }
-    if (item.action_id) { w.data(static_cast<uint8_t>(OtbmAttribute::ActionId)); w.u16(static_cast<uint16_t>(item.action_id)); }
-    if (item.unique_id) { w.data(static_cast<uint8_t>(OtbmAttribute::UniqueId)); w.u16(static_cast<uint16_t>(item.unique_id)); }
+    if (!useAttributeMap && item.action_id) { w.data(static_cast<uint8_t>(OtbmAttribute::ActionId)); w.u16(static_cast<uint16_t>(item.action_id)); }
+    if (!useAttributeMap && item.unique_id) { w.data(static_cast<uint8_t>(OtbmAttribute::UniqueId)); w.u16(static_cast<uint16_t>(item.unique_id)); }
     if (item.depot_id)  { w.data(static_cast<uint8_t>(OtbmAttribute::DepotId));  w.u16(item.depot_id); }
-    // Odtwarzane 1:1 przy zapisie (patrz komentarz przy OtbmItemExtra) - bez tego
-    // kazdy load+save w DME kasowal teleporty/znaki/drzwi domow/tier/podia.
-    // extra == null dla wiekszosci itemow -> zero pracy w typowym przypadku.
+
     if (item.extra) {
         const OtbmItemExtra &e = *item.extra;
-        if (!e.text.isEmpty()) {
+        if (useAttributeMap) {
+            writeAttributeMap(w, item);
+        }
+        if (!useAttributeMap && !e.text.isEmpty()) {
             w.data(static_cast<uint8_t>(OtbmAttribute::Text));
             w.str(e.text);
         }
-        if (!e.description.isEmpty()) {
+        if (!useAttributeMap && !e.description.isEmpty()) {
             w.data(static_cast<uint8_t>(OtbmAttribute::Desc));
             w.str(e.description);
         }
@@ -68,7 +154,7 @@ void writeMapItem(NodeWriter &w, const OtbmMapItem &item)
             w.data(static_cast<uint8_t>(OtbmAttribute::HouseDoorId));
             w.data(e.door_id);
         }
-        if (e.tier) {
+        if (!useAttributeMap && e.tier) {
             w.data(static_cast<uint8_t>(OtbmAttribute::Tier));
             w.data(e.tier);
         }
@@ -79,25 +165,85 @@ void writeMapItem(NodeWriter &w, const OtbmMapItem &item)
             }
         }
     }
-    for (const OtbmMapItem &child : item.children) {
+    for (const OtbmMapItem &child : item.childItems()) {
         writeMapItem(w, child);
     }
     w.end();
 }
 
-} // namespace
+}
 
 namespace {
 
-// Atrybuty itemu, ktore potrafimy bezpiecznie przeczytac z poziomu wezla.
-// Obejmuje juz wszystkie atrybuty o STALEJ dlugosci, jakie realnie wystepuja
-// na mapach RME/TFS (Count/Charges/ActionId/UniqueId/DepotId/Text/Desc/
-// TeleportDest/HouseDoorId/Tier/PodiumOutfit) - te sa odczytywane I zapisywane
-// z powrotem (patrz writeMapItem), wiec load+save jest dla nich bezstratny.
-// Przy NAPRAWDE nieznanym atrybucie (np. OTBM_ATTR_ATTRIBUTE_MAP z OTBM v4)
-// przerywamy parsowanie dalszych atrybutow tego itemu - zawartosc kontenerow
-// i tak siedzi w dzieciach wezla, wiec ona sie nie gubi; ginie tylko ten
-// pojedynczy, nierozpoznany atrybut.
+bool readAttributeMap(BinaryNode &node, OtbmMapItem &item)
+{
+    uint16_t count = 0;
+    if (!node.getU16(count)) return false;
+
+    OtbmItemExtra &extra = item.ensureExtra();
+    extra.has_attribute_map = true;
+    extra.attribute_map.reserve(extra.attribute_map.size() + count);
+
+    for (uint16_t i = 0; i < count; ++i) {
+        uint16_t keyLength = 0;
+        QByteArray key;
+        uint8_t type = 0;
+        if (!node.getU16(keyLength) || !node.readBytes(keyLength, key) || !node.getU8(type))
+            return false;
+
+        QByteArray valueRaw;
+        qsizetype valueSize = 0;
+        switch (type) {
+        case 0:
+            break;
+        case 1: {
+            uint32_t length = 0;
+            if (!node.getU32(length)) return false;
+            appendU32(valueRaw, length);
+            if (length > static_cast<uint32_t>(node.bytesRemaining())) return false;
+            QByteArray stringBytes;
+            if (!node.readBytes(static_cast<qsizetype>(length), stringBytes)) return false;
+            valueRaw.append(stringBytes);
+            break;
+        }
+        case 2:
+        case 3:
+            valueSize = 4;
+            break;
+        case 4:
+            valueSize = 1;
+            break;
+        case 5:
+            valueSize = 8;
+            break;
+        default:
+
+            return false;
+        }
+        if (valueSize > 0) {
+            if (!node.readBytes(valueSize, valueRaw)) return false;
+        }
+
+        extra.attribute_map.push_back({key, type, valueRaw});
+
+        if (type == 2 && valueRaw.size() == 4) {
+            const uint32_t value = rawU32(valueRaw);
+            if (key == QByteArrayLiteral("aid")) item.action_id = static_cast<uint16_t>(value);
+            else if (key == QByteArrayLiteral("uid")) item.unique_id = static_cast<uint16_t>(value);
+            else if (key == QByteArrayLiteral("tier")) extra.tier = static_cast<uint8_t>(value);
+        } else if (type == 1 && valueRaw.size() >= 4) {
+            const uint32_t length = rawU32(valueRaw);
+            if (length == static_cast<uint32_t>(valueRaw.size() - 4)) {
+                const QString value = QString::fromLatin1(valueRaw.constData() + 4,
+                                                          static_cast<qsizetype>(length));
+                if (key == QByteArrayLiteral("text")) extra.text = value;
+                else if (key == QByteArrayLiteral("desc")) extra.description = value;
+            }
+        }
+    }
+    return true;
+}
+
 bool readItemAttribute(BinaryNode &node, OtbmAttribute attr, OtbmMapItem &item)
 {
     switch (attr) {
@@ -132,9 +278,7 @@ bool readItemAttribute(BinaryNode &node, OtbmAttribute attr, OtbmMapItem &item)
         item.depot_id = value;
         return true;
     }
-    // Ponizsze byly kiedys "nieznane" i przerywaly parsowanie atrybutow itemu -
-    // co przy zapisie kasowalo je BEZPOWROTNIE (teleporty/znaki/drzwi domow).
-    // Uklad bajtow 1:1 z RME (OTAcademy/RME, iomap_otbm.cpp).
+
     case OtbmAttribute::Text: {
         QString value;
         if (!node.getString(value)) return false;
@@ -171,16 +315,16 @@ bool readItemAttribute(BinaryNode &node, OtbmAttribute attr, OtbmMapItem &item)
         return true;
     }
     case OtbmAttribute::PodiumOutfit: {
-        // 15 surowych bajtow (flagi, kierunek, outfit, mount) - patrz komentarz
-        // przy OtbmItemExtra::podium_raw. Trzymane 1:1, bez interpretacji.
+
         QByteArray raw;
         if (!node.readBytes(15, raw)) return false;
         item.ensureExtra().podium_raw = raw;
         return true;
     }
+    case OtbmAttribute::AttributeMap:
+        return readAttributeMap(node, item);
     default:
-        // Naprawde nieznana/zmiennej dlugosci (np. OTBM_ATTR_ATTRIBUTE_MAP z
-        // OTBM v4, ktorego DME nie zapisuje) - nie ryzykujemy zlego offsetu.
+
         return false;
     }
 }
@@ -194,8 +338,7 @@ QVariantMap itemToVariant(const OtbmMapItem &item)
     if (item.action_id) map.insert(QStringLiteral("actionId"), item.action_id);
     if (item.unique_id) map.insert(QStringLiteral("uniqueId"), item.unique_id);
     if (item.depot_id) map.insert(QStringLiteral("depotId"), item.depot_id);
-    // Wystawione dla przyszlego UI (np. Item Properties) - dane sa teraz
-    // zachowywane przy zapisie (patrz OtbmItemExtra), wiec warto je juz udostepnic.
+
     if (item.extra) {
         const OtbmItemExtra &e = *item.extra;
         if (!e.text.isEmpty()) map.insert(QStringLiteral("text"), e.text);
@@ -211,13 +354,12 @@ QVariantMap itemToVariant(const OtbmMapItem &item)
     return map;
 }
 
-} // namespace
+}
 
 OtbmReader::OtbmReader(QObject *parent)
     : QObject(parent)
 {
-    // Kazda realna zmiana mapy emituje mapChanged - dokument sam sledzi swoja flage
-    // niezapisanych zmian, zamiast globalnego "dirty" w QML (system kart map).
+
     connect(this, &OtbmReader::mapChanged, this, [this] { setDirty(true); });
 }
 
@@ -250,10 +392,14 @@ void OtbmReader::reset()
     m_description.clear();
     m_spawnFile.clear();
     m_houseFile.clear();
+    m_spawnsXmlLoaded = false;
+    m_housesXmlLoaded = false;
+    m_spawnsModified = false;
+    m_housesModified = false;
     m_itemCount = 0;
     m_loaded = false;
     m_errorString.clear();
-    m_filePath.clear();   // porazka load nie moze zostawic sciezki po starej mapie
+    m_filePath.clear();
     setDirty(false);
 
     emit loadedChanged();
@@ -267,46 +413,62 @@ void OtbmReader::setError(const QString &message)
     emit errorChanged();
 }
 
+bool OtbmReader::abortLoad(QString message)
+{
+
+    reset();
+    setError(message.isEmpty() ? QStringLiteral("Failed to load the OTBM file")
+                               : message);
+    return false;
+}
+
 bool OtbmReader::loadFile(const QString &path)
 {
     reset();
 
     NodeFileReader file;
-    // OTBM zaczyna sie zwykle od 4 bajtow 0x00 (wersja), czasem od "OTBM".
+
     if (!file.loadFile(path, {QByteArrayLiteral("OTBM"), QByteArray(4, '\0')})) {
-        setError(file.errorString());
-        emit loadedChanged();
-        return false;
+        return abortLoad(file.errorString());
     }
 
     BinaryNode &root = file.rootNode();
     if (!parseRootHeader(root)) {
-        return false;
+        return abortLoad(m_errorString);
     }
 
-    if (root.children().isEmpty()) {
-        setError(QStringLiteral("Brak wezla MapData w pliku OTBM"));
-        emit loadedChanged();
-        return false;
+    if (root.children().size() != 1) {
+        return abortLoad(root.children().isEmpty()
+            ? QStringLiteral("Missing MapData node in the OTBM file")
+            : QStringLiteral("Invalid number of MapData nodes in the OTBM file"));
     }
 
-    // Pierwsze (i jedyne) dziecko korzenia to MapData.
     BinaryNode mapData = root.children().first();
     if (!parseMapData(mapData)) {
-        return false;
+        return abortLoad(m_errorString);
+    }
+
+    QSet<quint64> tilePositions;
+    tilePositions.reserve(static_cast<qsizetype>(m_tiles.size()));
+    for (const OtbmTile &tile : m_tiles) {
+        const quint64 key = posKey3d(tile.x, tile.y, tile.z);
+        if (tilePositions.contains(key)) {
+            return abortLoad(QStringLiteral("Duplicate tile at position %1, %2, %3")
+                                 .arg(tile.x).arg(tile.y).arg(tile.z));
+        }
+        tilePositions.insert(key);
     }
 
     rebuildPosIndex();
 
-    // Spawny/domy z zewnetrznych XML (ExtSpawnFile/ExtHouseFile) - dokladane PRZED
-    // loadedChanged, zeby indeksy MapView od razu widzialy kafle spawnow.
+    // Spawn and house XML files are optional sidecars and never block map loading.
     loadSpawnsXml(path);
     loadHousesXml(path);
 
     m_loaded = true;
     m_filePath = path;
     emit filePathChanged();
-    setDirty(false);   // swiezo wczytana mapa = brak niezapisanych zmian
+    setDirty(false);
     emit loadedChanged();
     return true;
 }
@@ -314,13 +476,9 @@ bool OtbmReader::loadFile(const QString &path)
 void OtbmReader::applyClientVersions(int clientVersion, int otbMajor, int otbMinor)
 {
     Q_UNUSED(clientVersion);
-    // Surowa wersja w naglowku = 2, jak zapisuje RME (dowod: world.otbm od nekiro
-    // 7.72 zapisany RME 3.5 ma raw u32 = 2). Nasz writer emituje wspolczesny format
-    // wezlow (Count jako atrybut itemu), wiec oznaczanie pliku nizsza wersja
-    // (OTBM1 ma INNE kodowanie itemow) myliloby loader TFS/RME.
-    m_otbmVersion = 2;
-    // Wersje items wg AKTUALNIE zaladowanego items.otb - nie przepisane z wczytanej
-    // mapy (mogla byc zapisana starszym klientem/OTB). Jak RME.
+
+    if (m_otbmVersion < 2) m_otbmVersion = 2;
+
     if (otbMajor > 0) m_otbItemsMajor = static_cast<uint32_t>(otbMajor);
     if (otbMinor > 0) m_otbItemsMinor = static_cast<uint32_t>(otbMinor);
 }
@@ -335,6 +493,8 @@ bool OtbmReader::newMap(int width, int height, int clientVersion,
     m_height = static_cast<uint16_t>(std::clamp(height, 256, 65535));
     applyClientVersions(clientVersion, otbMajor, otbMinor);
     m_description = QStringLiteral("Created with Dewral Map Editor");
+    m_spawnsXmlLoaded = true;
+    m_housesXmlLoaded = true;
 
     m_loaded = true;
     emit loadedChanged();
@@ -343,117 +503,157 @@ bool OtbmReader::newMap(int width, int height, int clientVersion,
 
 bool OtbmReader::parseRootHeader(BinaryNode &root)
 {
-    root.skip(1); // bajt typu wezla (RootHeader)
+    uint8_t nodeType = 0;
+    if (!root.getU8(nodeType)
+        || static_cast<OtbmNode>(nodeType) != OtbmNode::RootHeader) {
+        setError(QStringLiteral("Invalid OTBM root node"));
+        return false;
+    }
 
     if (!root.getU32(m_otbmVersion)
         || !root.getU16(m_width)
         || !root.getU16(m_height)
         || !root.getU32(m_otbItemsMajor)
         || !root.getU32(m_otbItemsMinor)) {
-        setError(QStringLiteral("Uszkodzony naglowek OTBM"));
-        emit loadedChanged();
+        setError(QStringLiteral("Corrupt OTBM header"));
         return false;
     }
 
-    // Wersje 1-4 (0..3). Nowsze tylko ostrzegamy, ale probujemy czytac dalej.
     if (m_otbmVersion > static_cast<uint32_t>(OtbmVersion::V4)) {
-        // brak twardego bledu - format wezlow jest zgodny
+        setError(QStringLiteral("Unsupported OTBM version: %1").arg(m_otbmVersion));
+        return false;
+    }
+    if (root.bytesRemaining() != 0) {
+        setError(QStringLiteral("Unsupported data in the OTBM header"));
+        return false;
     }
     return true;
 }
 
 bool OtbmReader::parseMapData(BinaryNode &mapData)
 {
-    mapData.skip(1); // bajt typu wezla (MapData)
+    uint8_t mapNodeType = 0;
+    if (!mapData.getU8(mapNodeType)
+        || static_cast<OtbmNode>(mapNodeType) != OtbmNode::MapData) {
+        setError(QStringLiteral("Invalid MapData node"));
+        return false;
+    }
 
-    // Atrybuty mapy: description, spawn file, house file...
     while (mapData.bytesRemaining() > 0) {
         uint8_t attrType = 0;
         if (!mapData.getU8(attrType)) {
-            break;
+            setError(QStringLiteral("Corrupt MapData attribute"));
+            return false;
         }
 
         QString value;
         switch (static_cast<OtbmAttribute>(attrType)) {
         case OtbmAttribute::Description:
-            if (!mapData.getString(value)) return true;
+            if (!mapData.getString(value)) {
+                setError(QStringLiteral("Corrupt map description in MapData"));
+                return false;
+            }
             if (!m_description.isEmpty()) m_description.append(QLatin1Char('\n'));
             m_description.append(value);
             break;
         case OtbmAttribute::ExtSpawnFile:
-            if (!mapData.getString(m_spawnFile)) return true;
+            if (!mapData.getString(m_spawnFile)) {
+                setError(QStringLiteral("Corrupt spawn file name in MapData"));
+                return false;
+            }
             break;
         case OtbmAttribute::ExtHouseFile:
-            if (!mapData.getString(m_houseFile)) return true;
+            if (!mapData.getString(m_houseFile)) {
+                setError(QStringLiteral("Corrupt house file name in MapData"));
+                return false;
+            }
             break;
         case OtbmAttribute::ExtSpawnNpcFile:
-            if (!mapData.getString(value)) return true;
+            if (!mapData.getString(value)) {
+                setError(QStringLiteral("Corrupt NPC file name in MapData"));
+                return false;
+            }
             break;
         default:
-            // Nieznany atrybut na poziomie mapy - przerywamy petle atrybutow.
-            mapData.skip(mapData.bytesRemaining());
-            break;
+            setError(QStringLiteral("Unsupported MapData attribute: %1").arg(attrType));
+            return false;
         }
     }
 
-    // Dzieci MapData: TileArea / Towns / Waypoints.
     for (const BinaryNode &sourceChild : mapData.children()) {
         BinaryNode child = sourceChild;
         uint8_t nodeType = 0;
         if (!child.getU8(nodeType)) {
-            continue;
+            setError(QStringLiteral("Empty or corrupt node inside MapData"));
+            return false;
         }
 
         switch (static_cast<OtbmNode>(nodeType)) {
         case OtbmNode::TileArea:
-            parseTileArea(child);
+            if (!parseTileArea(child)) return false;
             break;
         case OtbmNode::Towns:
-            parseTowns(child);
+            if (!parseTowns(child)) return false;
             break;
         case OtbmNode::Waypoints:
-            parseWaypoints(child);
+            if (!parseWaypoints(child)) return false;
             break;
         default:
-            break;
+            setError(QStringLiteral("Unsupported node in MapData: %1").arg(nodeType));
+            return false;
         }
     }
 
     return true;
 }
 
-void OtbmReader::parseTileArea(BinaryNode &area)
+bool OtbmReader::parseTileArea(BinaryNode &area)
 {
-    // bajt typu juz zostal pobrany przez getU8 w parseMapData.
+
     uint16_t baseX = 0;
     uint16_t baseY = 0;
     uint8_t baseZ = 0;
     if (!area.getU16(baseX) || !area.getU16(baseY) || !area.getU8(baseZ)) {
-        return;
+        setError(QStringLiteral("Corrupt TileArea header"));
+        return false;
+    }
+    if (baseZ > 15 || area.bytesRemaining() != 0) {
+        setError(baseZ > 15 ? QStringLiteral("Invalid TileArea floor: %1").arg(baseZ)
+                            : QStringLiteral("Unsupported data in TileArea"));
+        return false;
     }
 
     for (const BinaryNode &sourceTile : area.children()) {
         BinaryNode tile = sourceTile;
-        parseTile(tile, baseX, baseY, baseZ);
+        if (!parseTile(tile, baseX, baseY, baseZ)) return false;
     }
+    return true;
 }
 
-void OtbmReader::parseTile(BinaryNode &tile, uint16_t baseX, uint16_t baseY, uint8_t baseZ)
+bool OtbmReader::parseTile(BinaryNode &tile, uint16_t baseX, uint16_t baseY, uint8_t baseZ)
 {
     uint8_t nodeType = 0;
     if (!tile.getU8(nodeType)) {
-        return;
+        setError(QStringLiteral("Empty or corrupt tile node"));
+        return false;
     }
 
     const bool isHouse = static_cast<OtbmNode>(nodeType) == OtbmNode::HouseTile;
     if (!isHouse && static_cast<OtbmNode>(nodeType) != OtbmNode::Tile) {
-        return;
+        setError(QStringLiteral("Unsupported node in TileArea: %1").arg(nodeType));
+        return false;
     }
 
     uint8_t dx = 0;
     uint8_t dy = 0;
     if (!tile.getU8(dx) || !tile.getU8(dy)) {
-        return;
+        setError(QStringLiteral("Corrupt tile position in TileArea"));
+        return false;
+    }
+    if (static_cast<uint32_t>(baseX) + dx > 65535u
+        || static_cast<uint32_t>(baseY) + dy > 65535u) {
+        setError(QStringLiteral("Tile position is outside the OTBM range"));
+        return false;
     }
 
     OtbmTile result;
@@ -462,137 +662,170 @@ void OtbmReader::parseTile(BinaryNode &tile, uint16_t baseX, uint16_t baseY, uin
     result.z = baseZ;
     result.is_house = isHouse;
 
-    if (isHouse) {
-        tile.getU32(result.house_id);
+    if (isHouse && (!tile.getU32(result.house_id) || result.house_id == 0)) {
+        setError(QStringLiteral("Corrupt house tile identifier"));
+        return false;
     }
 
-    // Atrybuty plytki: TileFlags oraz Item (ground w formie kompaktowej).
     while (tile.bytesRemaining() > 0) {
         uint8_t attrType = 0;
         if (!tile.getU8(attrType)) {
-            break;
+            setError(QStringLiteral("Corrupt tile attribute at %1, %2, %3")
+                         .arg(result.x).arg(result.y).arg(result.z));
+            return false;
         }
 
         if (static_cast<OtbmAttribute>(attrType) == OtbmAttribute::TileFlags) {
-            tile.getU32(result.flags);
+            if (!tile.getU32(result.flags)) {
+                setError(QStringLiteral("Corrupt tile flags at %1, %2, %3")
+                             .arg(result.x).arg(result.y).arg(result.z));
+                return false;
+            }
         } else if (static_cast<OtbmAttribute>(attrType) == OtbmAttribute::Item) {
             uint16_t serverId = 0;
-            if (!tile.getU16(serverId)) {
-                break;
+            if (!tile.getU16(serverId) || serverId == 0) {
+                setError(QStringLiteral("Corrupt compact item at tile %1, %2, %3")
+                             .arg(result.x).arg(result.y).arg(result.z));
+                return false;
             }
             OtbmMapItem ground;
             ground.server_id = serverId;
             ground.is_ground = true;
-            m_itemCount += countItems(ground);
             result.items.push_back(std::move(ground));
         } else {
-            // Nieznany atrybut plytki - nie znamy dlugosci, przerywamy.
-            break;
+            setError(QStringLiteral("Unsupported tile attribute: %1").arg(attrType));
+            return false;
         }
     }
 
-    // Dzieci plytki to pelne wezly Item (np. stosy, kontenery).
     for (const BinaryNode &sourceItem : tile.children()) {
         BinaryNode itemNode = sourceItem;
         uint8_t itemType = 0;
         if (!itemNode.getU8(itemType)
             || static_cast<OtbmNode>(itemType) != OtbmNode::Item) {
-            continue;
+            setError(QStringLiteral("Invalid item node at tile %1, %2, %3")
+                         .arg(result.x).arg(result.y).arg(result.z));
+            return false;
         }
-        OtbmMapItem item = parseItem(itemNode);
-        if (item.server_id == 0) {
-            continue;
-        }
-        m_itemCount += countItems(item);
+        OtbmMapItem item;
+        if (!parseItem(itemNode, item)) return false;
         result.items.push_back(std::move(item));
     }
 
+    for (const OtbmMapItem &item : result.items) m_itemCount += countItems(item);
     m_tiles.push_back(std::move(result));
+    return true;
 }
 
-OtbmMapItem OtbmReader::parseItem(BinaryNode &itemNode)
+bool OtbmReader::parseItem(BinaryNode &itemNode, OtbmMapItem &item)
 {
-    // bajt typu (Item) juz pobrany przez wolajacego.
-    OtbmMapItem item;
-    if (!itemNode.getU16(item.server_id)) {
-        item.server_id = 0;
-        return item;
+
+    if (!itemNode.getU16(item.server_id) || item.server_id == 0) {
+        setError(QStringLiteral("Corrupt OTBM item identifier"));
+        return false;
     }
 
-    // Atrybuty itemu - czytamy znane, przy nieznanym przerywamy.
     while (itemNode.bytesRemaining() > 0) {
         uint8_t attrType = 0;
         if (!itemNode.getU8(attrType)) {
-            break;
+            setError(QStringLiteral("Corrupt attribute of item %1").arg(item.server_id));
+            return false;
         }
         if (!readItemAttribute(itemNode, static_cast<OtbmAttribute>(attrType), item)) {
-            break;
+            setError(QStringLiteral("Unsupported or corrupt attribute %1 of item %2")
+                         .arg(attrType).arg(item.server_id));
+            return false;
         }
     }
 
-    // Zawartosc kontenera = dzieci wezla Item.
     for (const BinaryNode &sourceChild : itemNode.children()) {
         BinaryNode childNode = sourceChild;
         uint8_t childType = 0;
         if (!childNode.getU8(childType)
             || static_cast<OtbmNode>(childType) != OtbmNode::Item) {
-            continue;
+            setError(QStringLiteral("Invalid node inside item %1")
+                         .arg(item.server_id));
+            return false;
         }
-        OtbmMapItem child = parseItem(childNode);
-        if (child.server_id != 0) {
-            item.children.push_back(std::move(child));
-        }
+        OtbmMapItem child;
+        if (!parseItem(childNode, child)) return false;
+        item.ensureChildren().push_back(std::move(child));
     }
 
-    return item;
+    return true;
 }
 
-void OtbmReader::parseTowns(BinaryNode &townsNode)
+bool OtbmReader::parseTowns(BinaryNode &townsNode)
 {
+    if (townsNode.bytesRemaining() != 0) {
+        setError(QStringLiteral("Unsupported data in the Towns node"));
+        return false;
+    }
+    QSet<uint32_t> townIds;
     for (const BinaryNode &sourceTown : townsNode.children()) {
         BinaryNode townNode = sourceTown;
         uint8_t nodeType = 0;
         if (!townNode.getU8(nodeType)
             || static_cast<OtbmNode>(nodeType) != OtbmNode::Town) {
-            continue;
+            setError(QStringLiteral("Invalid node inside Towns"));
+            return false;
         }
 
         OtbmTown town;
-        if (!townNode.getU32(town.id) || !townNode.getString(town.name)) {
-            continue;
+        if (!townNode.getU32(town.id) || town.id == 0 || !townNode.getString(town.name)
+            || !townNode.getU16(town.temple_x) || !townNode.getU16(town.temple_y)
+            || !townNode.getU8(town.temple_z)) {
+            setError(QStringLiteral("Corrupt town entry in OTBM"));
+            return false;
         }
-        townNode.getU16(town.temple_x);
-        townNode.getU16(town.temple_y);
-        townNode.getU8(town.temple_z);
+        if (town.temple_z > 15 || townNode.bytesRemaining() != 0 || townIds.contains(town.id)) {
+            setError(townIds.contains(town.id)
+                         ? QStringLiteral("Duplicate town identifier: %1").arg(town.id)
+                         : QStringLiteral("Invalid or unsupported data for town %1")
+                               .arg(town.id));
+            return false;
+        }
+        townIds.insert(town.id);
         m_towns.push_back(std::move(town));
     }
+    return true;
 }
 
-void OtbmReader::parseWaypoints(BinaryNode &waypointsNode)
+bool OtbmReader::parseWaypoints(BinaryNode &waypointsNode)
 {
+    if (waypointsNode.bytesRemaining() != 0) {
+        setError(QStringLiteral("Unsupported data in the Waypoints node"));
+        return false;
+    }
     for (const BinaryNode &sourceWaypoint : waypointsNode.children()) {
         BinaryNode wpNode = sourceWaypoint;
         uint8_t nodeType = 0;
         if (!wpNode.getU8(nodeType)
             || static_cast<OtbmNode>(nodeType) != OtbmNode::Waypoint) {
-            continue;
+            setError(QStringLiteral("Invalid node inside Waypoints"));
+            return false;
         }
 
         OtbmWaypoint wp;
-        if (!wpNode.getString(wp.name)) {
-            continue;
+        if (!wpNode.getString(wp.name) || !wpNode.getU16(wp.x) || !wpNode.getU16(wp.y)
+            || !wpNode.getU8(wp.z)) {
+            setError(QStringLiteral("Corrupt waypoint in OTBM"));
+            return false;
         }
-        wpNode.getU16(wp.x);
-        wpNode.getU16(wp.y);
-        wpNode.getU8(wp.z);
+        if (wp.z > 15 || wpNode.bytesRemaining() != 0) {
+            setError(QStringLiteral("Invalid or unsupported data for waypoint '%1'")
+                         .arg(wp.name));
+            return false;
+        }
         m_waypoints.push_back(std::move(wp));
     }
+    return true;
 }
 
 int OtbmReader::countItems(const OtbmMapItem &item) const
 {
     int total = 1;
-    for (const OtbmMapItem &child : item.children) {
+    for (const OtbmMapItem &child : item.childItems()) {
         total += countItems(child);
     }
     return total;
@@ -630,7 +863,7 @@ bool OtbmReader::addItem(int x, int y, int z, uint16_t serverId)
         item.is_ground = tile.items.empty();
         tile.items.push_back(item);
     } else {
-        // Nowy kafelek - push_back moze przealokowac m_tiles (patrz naglowek).
+
         OtbmTile tile;
         tile.x = static_cast<uint16_t>(x);
         tile.y = static_cast<uint16_t>(y);
@@ -661,11 +894,11 @@ bool OtbmReader::placeItem(int x, int y, int z, const OtbmMapItem &src,
         return false;
     }
 
-    recordTile(x, y, z); // undo: stan przed zmiana
+    recordTile(x, y, z);
 
-    OtbmMapItem item = src;      // kopia: count/action_id/unique_id/zawartosc kontenera
+    OtbmMapItem item = src;
     item.is_ground = isGround;
-    // Item moze byc kontenerem z zawartoscia - m_itemCount liczy kazdy wezel z osobna.
+
     const int nodes = countItems(item);
 
     auto it = m_posIndex.find(posKey3d(x, y, z));
@@ -680,7 +913,7 @@ bool OtbmReader::placeItem(int x, int y, int z, const OtbmMapItem &src,
             m_itemCount += nodes;
         }
     } else {
-        // Nowy kafelek - push_back moze przealokowac m_tiles.
+
         OtbmTile tile;
         tile.x = static_cast<uint16_t>(x);
         tile.y = static_cast<uint16_t>(y);
@@ -691,23 +924,16 @@ bool OtbmReader::placeItem(int x, int y, int z, const OtbmMapItem &src,
         m_itemCount += nodes;
     }
 
-    // W trybie grupowym (malowanie/multi-edycja) undoCount i tak nie zmienia sie
-    // az do endUndoGroup (dopiero tam trafia na stos) - emit tutaj bylby fikcyjny
-    // (zero realnej zmiany), a przy duzym pedzlu = setki zbednych sygnalow ->
-    // QML re-evaluuje bindingi (np. Undo.enabled) i FPS drastycznie spada.
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
 
-// Itemy nie leza wylacznie na wierzchu kafla - OTBM trzyma zawartosc pojemnikow w
-// OtbmMapItem::children (torba w skrzyni w depocie, rekurencyjnie). Find/Replace/Remove
-// musi schodzic w glab, inaczej count jest zanizony o wszystko, co siedzi w kontenerach.
 namespace {
 
 int countMatches(const OtbmMapItem &item, uint16_t sid)
 {
     int n = (item.server_id == sid) ? 1 : 0;
-    for (const OtbmMapItem &child : item.children) n += countMatches(child, sid);
+    for (const OtbmMapItem &child : item.childItems()) n += countMatches(child, sid);
     return n;
 }
 
@@ -722,7 +948,7 @@ bool hasMatch(const std::vector<OtbmMapItem> &items, uint16_t sid)
 {
     for (const OtbmMapItem &item : items) {
         if (item.server_id == sid) return true;
-        if (hasMatch(item.children, sid)) return true;
+        if (hasMatch(item.childItems(), sid)) return true;
     }
     return false;
 }
@@ -731,24 +957,20 @@ int replaceMatches(std::vector<OtbmMapItem> &items, uint16_t fromId, uint16_t to
 {
     int n = 0;
     for (OtbmMapItem &item : items) {
-        // is_ground zostaje - podmiana w miejscu nie zmienia roli itemu w stosie.
+
         if (item.server_id == fromId) { item.server_id = toId; ++n; }
-        n += replaceMatches(item.children, fromId, toId);
+        if (item.children) n += replaceMatches(*item.children, fromId, toId);
     }
     return n;
 }
 
-// Liczba wezlow w poddrzewie (item + cala zawartosc). Odpowiednik OtbmReader::countItems,
-// powtorzony tu, bo helpery sa wolnymi funkcjami.
 int countNodes(const OtbmMapItem &item)
 {
     int total = 1;
-    for (const OtbmMapItem &child : item.children) total += countNodes(child);
+    for (const OtbmMapItem &child : item.childItems()) total += countNodes(child);
     return total;
 }
 
-// Zwraca liczbe usunietych dopasowan. Do removedNodes dolicza CALE poddrzewa: kasujac
-// kontener kasujemy tez jego zawartosc, a m_itemCount liczy kazdy wezel z osobna.
 int removeMatches(std::vector<OtbmMapItem> &items, const std::vector<uint16_t> &ids,
                   int &removedNodes)
 {
@@ -757,16 +979,16 @@ int removeMatches(std::vector<OtbmMapItem> &items, const std::vector<uint16_t> &
         if (std::find(ids.begin(), ids.end(), it->server_id) != ids.end()) {
             ++n;
             removedNodes += countNodes(*it);
-            it = items.erase(it);   // zawartosc kontenera znika razem z nim
+            it = items.erase(it);
         } else {
-            n += removeMatches(it->children, ids, removedNodes);
+            if (it->children) n += removeMatches(*it->children, ids, removedNodes);
             ++it;
         }
     }
     return n;
 }
 
-} // namespace
+}
 
 int OtbmReader::replaceItemsById(int x, int y, int z, uint16_t fromId, uint16_t toId)
 {
@@ -775,16 +997,14 @@ int OtbmReader::replaceItemsById(int x, int y, int z, uint16_t fromId, uint16_t 
     if (it == m_posIndex.end()) return 0;
     OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
 
-    if (!hasMatch(tile.items, fromId)) return 0;   // nic do podmiany - nie smiec undo
+    if (!hasMatch(tile.items, fromId)) return 0;
 
-    recordTile(x, y, z); // undo: stan przed zmiana
+    recordTile(x, y, z);
     const int n = replaceMatches(tile.items, fromId, toId);
-    if (!m_undoGrouping) emit mapChanged();   // patrz komentarz w placeItem()
+    if (!m_undoGrouping) emit mapChanged();
     return n;
 }
 
-// Istniejacy kafel albo swiezo utworzony pusty - BEZ snapshotu undo (uzywane przy
-// wczytywaniu spawns.xml, gdzie undo nie ma prawa dostac wpisow).
 OtbmTile *OtbmReader::getOrCreateTileRaw(int x, int y, int z)
 {
     if (x < 0 || y < 0 || z < 0 || z > 15) return nullptr;
@@ -797,78 +1017,204 @@ OtbmTile *OtbmReader::getOrCreateTileRaw(int x, int y, int z)
     tile.y = static_cast<uint16_t>(y);
     tile.z = static_cast<uint8_t>(z);
     m_posIndex.insert(key, static_cast<int>(m_tiles.size()));
-    m_tiles.push_back(std::move(tile));   // deque - wskazniki pozostaja wazne
+    m_tiles.push_back(std::move(tile));
     return &m_tiles.back();
 }
 
-// Kafel pod spawn/potwora - istniejacy albo swiezo utworzony (spawn moze stac na
-// pustym terenie; snapshot undo przed utworzeniem zapisuje "brak kafla").
 OtbmTile *OtbmReader::tileForSpawnEdit(int x, int y, int z)
 {
     if (x < 0 || y < 0 || z < 0 || z > 15) return nullptr;
-    recordTile(x, y, z);   // undo: stan przed zmiana (takze "nie istnial")
+    recordTile(x, y, z);
     return getOrCreateTileRaw(x, y, z);
 }
 
-void OtbmReader::loadSpawnsXml(const QString &mapPath)
-{
-    if (m_spawnFile.isEmpty()) return;
-    const QString path = QFileInfo(mapPath).dir().filePath(m_spawnFile);
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return;   // brak pliku = brak spawnow (nie blad)
+namespace {
 
-    QXmlStreamReader xml(&f);
-    int cx = 0, cy = 0, cz = 0;
-    while (!xml.atEnd()) {
-        if (xml.readNext() != QXmlStreamReader::StartElement) continue;
-        const auto tag = xml.name();
-        if (tag == QLatin1String("spawn")) {
-            const auto a = xml.attributes();
-            cx = a.value(QLatin1String("centerx")).toInt();
-            cy = a.value(QLatin1String("centery")).toInt();
-            cz = a.value(QLatin1String("centerz")).toInt();
-            int radius = a.value(QLatin1String("radius")).toInt();
-            if (radius < 1) radius = 1;
-            if (OtbmTile *t = getOrCreateTileRaw(cx, cy, cz))
-                t->spawn_radius = radius;
-        } else if (tag == QLatin1String("monster") || tag == QLatin1String("npc")) {
-            const auto a = xml.attributes();
-            // x/y w XML to OFFSETY od centrum spawnu (format RME/TFS).
-            const int x = cx + a.value(QLatin1String("x")).toInt();
-            const int y = cy + a.value(QLatin1String("y")).toInt();
-            const int st = a.value(QLatin1String("spawntime")).toInt();
-            if (OtbmTile *t = getOrCreateTileRaw(x, y, cz)) {
-                t->creature_name = a.value(QLatin1String("name")).toString();
-                t->creature_spawntime = st > 0 ? st : 60;
-                t->creature_is_npc = (tag == QLatin1String("npc"));
-            }
-        }
-    }
+bool requiredXmlInt(const QXmlStreamAttributes &attributes, QLatin1StringView name,
+                    int &value)
+{
+    const QStringView text = attributes.value(name);
+    if (text.isNull()) return false;
+    bool ok = false;
+    value = text.toInt(&ok);
+    return ok;
 }
 
-bool OtbmReader::saveSpawnsXml(const QString &mapPath)
+bool optionalXmlInt(const QXmlStreamAttributes &attributes, QLatin1StringView name,
+                    int defaultValue, int &value)
 {
-    // Czy w ogole cos jest? Bez spawnow nie tworzymy pliku (i nie ruszamy naglowka).
+    const QStringView text = attributes.value(name);
+    if (text.isNull()) {
+        value = defaultValue;
+        return true;
+    }
+    bool ok = false;
+    value = text.toInt(&ok);
+    return ok;
+}
+
+bool optionalXmlBool(const QXmlStreamAttributes &attributes, QLatin1StringView name,
+                     bool defaultValue, bool &value)
+{
+    const QStringView text = attributes.value(name);
+    if (text.isNull()) {
+        value = defaultValue;
+        return true;
+    }
+    if (text.compare(QLatin1String("1")) == 0
+        || text.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0) {
+        value = true;
+        return true;
+    }
+    if (text.compare(QLatin1String("0")) == 0
+        || text.compare(QLatin1String("false"), Qt::CaseInsensitive) == 0) {
+        value = false;
+        return true;
+    }
+    return false;
+}
+
+}
+
+bool OtbmReader::loadSpawnsXml(const QString &mapPath)
+{
+    m_spawnsXmlLoaded = m_spawnFile.isEmpty();
+    if (m_spawnFile.isEmpty()) return true;
+    const QString path = QFileInfo(mapPath).dir().filePath(m_spawnFile);
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+
+    struct ParsedSpawn { int x, y, z, radius; };
+    struct ParsedCreature { int x, y, z, spawnTime; QString name; bool npc; };
+    std::vector<ParsedSpawn> spawns;
+    std::vector<ParsedCreature> creatures;
+    QHash<quint64, int> spawnByPosition;
+    QHash<quint64, int> creatureByPosition;
+
+    QXmlStreamReader xml(&f);
+    auto fail = [](const QString &) {
+        return false;
+    };
+
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("spawns"))
+        return fail(QStringLiteral("Invalid root element in spawns.xml"));
+
+    while (xml.readNextStartElement()) {
+        if (xml.name() != QLatin1String("spawn"))
+            return fail(QStringLiteral("Unsupported element in spawns.xml"));
+
+        const QXmlStreamAttributes spawnAttributes = xml.attributes();
+        int cx = 0, cy = 0, cz = 0, radius = 0;
+        if (!requiredXmlInt(spawnAttributes, QLatin1String("centerx"), cx)
+            || !requiredXmlInt(spawnAttributes, QLatin1String("centery"), cy)
+            || !requiredXmlInt(spawnAttributes, QLatin1String("centerz"), cz)
+            || !requiredXmlInt(spawnAttributes, QLatin1String("radius"), radius)) {
+            return fail(QStringLiteral("Missing or invalid spawn data"));
+        }
+        if (cx < 0 || cx > 65535 || cy < 0 || cy > 65535 || cz < 0 || cz > 15
+            || radius < 1) {
+            return fail(QStringLiteral("Spawn position or radius is out of range"));
+        }
+        const quint64 spawnKey = posKey3d(cx, cy, cz);
+        const auto existingSpawn = spawnByPosition.constFind(spawnKey);
+        if (existingSpawn != spawnByPosition.constEnd()
+            && spawns[static_cast<size_t>(existingSpawn.value())].radius != radius) {
+            return fail(QStringLiteral("Duplicate spawn center with a different radius"));
+        }
+        if (existingSpawn == spawnByPosition.constEnd()) {
+            spawnByPosition.insert(spawnKey, static_cast<int>(spawns.size()));
+            spawns.push_back({cx, cy, cz, radius});
+        }
+
+        while (xml.readNextStartElement()) {
+            const bool isNpc = xml.name() == QLatin1String("npc");
+            if (!isNpc && xml.name() != QLatin1String("monster"))
+                return fail(QStringLiteral("Unsupported element inside a spawn"));
+
+            const QXmlStreamAttributes creatureAttributes = xml.attributes();
+            int dx = 0, dy = 0, spawnTime = 60;
+            const QString name = creatureAttributes.value(QLatin1String("name")).toString();
+            if (name.isEmpty()
+                || !requiredXmlInt(creatureAttributes, QLatin1String("x"), dx)
+                || !requiredXmlInt(creatureAttributes, QLatin1String("y"), dy)
+                || !optionalXmlInt(creatureAttributes, QLatin1String("spawntime"), 60,
+                                   spawnTime)
+                || spawnTime < 1) {
+                return fail(QStringLiteral("Missing or invalid monster/NPC data"));
+            }
+            const qint64 creatureX = static_cast<qint64>(cx) + dx;
+            const qint64 creatureY = static_cast<qint64>(cy) + dy;
+            if (creatureX < 0 || creatureX > 65535 || creatureY < 0 || creatureY > 65535)
+                return fail(QStringLiteral("Monster/NPC position is out of range"));
+
+            const int creatureXi = static_cast<int>(creatureX);
+            const int creatureYi = static_cast<int>(creatureY);
+            const quint64 creatureKey = posKey3d(creatureXi, creatureYi, cz);
+            const auto existingCreature = creatureByPosition.constFind(creatureKey);
+            if (existingCreature != creatureByPosition.constEnd()) {
+                const ParsedCreature &old = creatures[static_cast<size_t>(existingCreature.value())];
+                if (old.name != name || old.spawnTime != spawnTime || old.npc != isNpc)
+                    return fail(QStringLiteral("Conflicting monster/NPC entries on one tile"));
+            } else {
+                creatureByPosition.insert(creatureKey, static_cast<int>(creatures.size()));
+                creatures.push_back({creatureXi, creatureYi, cz, spawnTime, name, isNpc});
+            }
+
+            if (xml.readNextStartElement())
+                return fail(QStringLiteral("A monster/NPC element cannot have children"));
+        }
+    }
+
+    if (xml.hasError())
+        return fail(QStringLiteral("Corrupt spawn XML: %1").arg(xml.errorString()));
+
+    for (const ParsedSpawn &spawn : spawns) {
+        OtbmTile *center = getOrCreateTileRaw(spawn.x, spawn.y, spawn.z);
+        if (!center) return false;
+        center->spawn_radius = spawn.radius;
+    }
+    for (const ParsedCreature &creature : creatures) {
+        OtbmTile *tile = getOrCreateTileRaw(creature.x, creature.y, creature.z);
+        if (!tile) return false;
+        tile->creature_name = creature.name;
+        tile->creature_spawntime = creature.spawnTime;
+        tile->creature_is_npc = creature.npc;
+    }
+    m_spawnsXmlLoaded = true;
+    return true;
+}
+
+bool OtbmReader::buildSpawnsXml(const QString &mapPath, QString &targetPath,
+                                QByteArray &data)
+{
+    if (!m_spawnsXmlLoaded && !m_spawnsModified) {
+        targetPath.clear();
+        data.clear();
+        return true;
+    }
     bool any = false;
     for (const OtbmTile &t : m_tiles)
         if (t.spawn_radius > 0 || !t.creature_name.isEmpty()) { any = true; break; }
-    if (!any) return true;
 
-    // Nowa mapa bez wpisu ExtSpawnFile: przyjmij konwencje RME "<mapa>-spawn.xml".
+    if (m_spawnFile.isEmpty() && !any) {
+        targetPath.clear();
+        data.clear();
+        return true;
+    }
     if (m_spawnFile.isEmpty())
         m_spawnFile = QFileInfo(mapPath).completeBaseName() + QStringLiteral("-spawn.xml");
 
-    const QString path = QFileInfo(mapPath).dir().filePath(m_spawnFile);
-    // QSaveFile jak w saveFile: awaria w trakcie nie niszczy istniejacego pliku.
-    QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        setError(QStringLiteral("Nie mozna zapisac spawnow: %1").arg(path));
+    targetPath = QFileInfo(mapPath).dir().filePath(m_spawnFile);
+    data.clear();
+    QBuffer buffer(&data);
+    if (!buffer.open(QIODevice::WriteOnly)) {
+        setError(QStringLiteral("Cannot prepare spawn data"));
         return false;
     }
 
-    QXmlStreamWriter xml(&f);
+    QXmlStreamWriter xml(&buffer);
     xml.setAutoFormatting(true);
-    xml.setAutoFormattingIndent(-1);   // taby jak RME
+    xml.setAutoFormattingIndent(-1);
     xml.writeStartDocument();
     xml.writeStartElement(QStringLiteral("spawns"));
 
@@ -880,8 +1226,6 @@ bool OtbmReader::saveSpawnsXml(const QString &mapPath)
         xml.writeAttribute(QStringLiteral("centerz"), QString::number(c.z));
         xml.writeAttribute(QStringLiteral("radius"), QString::number(c.spawn_radius));
 
-        // Potwory w promieniu centrum - offsety wzgledem niego (format RME/TFS).
-        // Lookup po m_posIndex per kafel: promien jest maly (zwykle 1-10).
         for (int dy = -c.spawn_radius; dy <= c.spawn_radius; ++dy)
             for (int dx = -c.spawn_radius; dx <= c.spawn_radius; ++dx) {
                 auto it = m_posIndex.find(posKey3d(c.x + dx, c.y + dy, c.z));
@@ -903,59 +1247,100 @@ bool OtbmReader::saveSpawnsXml(const QString &mapPath)
 
     xml.writeEndElement();
     xml.writeEndDocument();
-    if (!f.commit()) {
-        setError(QStringLiteral("Blad zapisu spawnow: %1").arg(path));
+    if (xml.hasError()) {
+        setError(QStringLiteral("Failed to build spawn XML: %1").arg(targetPath));
         return false;
     }
     return true;
 }
 
-void OtbmReader::loadHousesXml(const QString &mapPath)
+bool OtbmReader::loadHousesXml(const QString &mapPath)
 {
-    if (m_houseFile.isEmpty()) return;
+    m_housesXmlLoaded = m_houseFile.isEmpty();
+    if (m_houseFile.isEmpty()) return true;
     const QString path = QFileInfo(mapPath).dir().filePath(m_houseFile);
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return;   // brak pliku = brak domow (nie blad)
+    if (!f.open(QIODevice::ReadOnly)) return false;
 
     QXmlStreamReader xml(&f);
-    while (!xml.atEnd()) {
-        if (xml.readNext() != QXmlStreamReader::StartElement) continue;
-        if (xml.name() != QLatin1String("house")) continue;
-        const auto a = xml.attributes();
+    auto fail = [](const QString &) {
+        return false;
+    };
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("houses"))
+        return fail(QStringLiteral("Invalid root element in houses.xml"));
+
+    QSet<uint32_t> houseIds;
+    std::vector<OtbmHouse> houses;
+    while (xml.readNextStartElement()) {
+        if (xml.name() != QLatin1String("house"))
+            return fail(QStringLiteral("Unsupported element in houses.xml"));
+        const QXmlStreamAttributes attributes = xml.attributes();
         OtbmHouse h;
-        h.id = a.value(QLatin1String("houseid")).toUInt();
-        h.name = a.value(QLatin1String("name")).toString();
-        h.rent = a.value(QLatin1String("rent")).toInt();
-        h.townId = a.value(QLatin1String("townid")).toInt();
-        h.guildhall = a.value(QLatin1String("guildhall")).toInt() != 0;
-        h.entryX = a.value(QLatin1String("entryx")).toInt();
-        h.entryY = a.value(QLatin1String("entryy")).toInt();
-        h.entryZ = a.value(QLatin1String("entryz")).toInt();
-        if (h.id > 0) m_houses.push_back(std::move(h));
+        int id = 0;
+        if (!requiredXmlInt(attributes, QLatin1String("houseid"), id)
+            || !optionalXmlInt(attributes, QLatin1String("rent"), 0, h.rent)
+            || !optionalXmlInt(attributes, QLatin1String("townid"), 0, h.townId)
+            || !optionalXmlInt(attributes, QLatin1String("entryx"), 0, h.entryX)
+            || !optionalXmlInt(attributes, QLatin1String("entryy"), 0, h.entryY)
+            || !optionalXmlInt(attributes, QLatin1String("entryz"), 0, h.entryZ)
+            || !optionalXmlBool(attributes, QLatin1String("guildhall"), false,
+                                h.guildhall)) {
+            return fail(QStringLiteral("Missing or invalid house data"));
+        }
+        if (id <= 0 || h.entryX < 0 || h.entryX > 65535 || h.entryY < 0
+            || h.entryY > 65535 || h.entryZ < 0 || h.entryZ > 15 || h.rent < 0
+            || h.townId < 0) {
+            return fail(QStringLiteral("House data is outside the allowed range"));
+        }
+        h.id = static_cast<uint32_t>(id);
+        if (houseIds.contains(h.id))
+            return fail(QStringLiteral("Duplicate house identifier: %1").arg(h.id));
+        houseIds.insert(h.id);
+        h.name = attributes.value(QLatin1String("name")).toString();
+        houses.push_back(std::move(h));
+
+        if (xml.readNextStartElement())
+            return fail(QStringLiteral("A house element cannot have children"));
     }
+
+    if (xml.hasError())
+        return fail(QStringLiteral("Corrupt house XML: %1").arg(xml.errorString()));
+
+    m_houses = std::move(houses);
+    m_housesXmlLoaded = true;
+    return true;
 }
 
-bool OtbmReader::saveHousesXml(const QString &mapPath)
+bool OtbmReader::buildHousesXml(const QString &mapPath, QString &targetPath,
+                                QByteArray &data)
 {
-    if (m_houses.empty()) return true;   // bez domow nie tworzymy pliku
+    if (!m_housesXmlLoaded && !m_housesModified) {
+        targetPath.clear();
+        data.clear();
+        return true;
+    }
 
+    if (m_houseFile.isEmpty() && m_houses.empty()) {
+        targetPath.clear();
+        data.clear();
+        return true;
+    }
     if (m_houseFile.isEmpty())
         m_houseFile = QFileInfo(mapPath).completeBaseName() + QStringLiteral("-house.xml");
 
-    // "size" (atrybut RME/TFS) = liczba kafli domu - policz raz dla wszystkich.
     QHash<uint32_t, int> sizes;
     for (const OtbmTile &t : m_tiles)
         if (t.is_house && t.house_id > 0) sizes[t.house_id]++;
 
-    const QString path = QFileInfo(mapPath).dir().filePath(m_houseFile);
-    // QSaveFile jak w saveFile: awaria w trakcie nie niszczy istniejacego pliku.
-    QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        setError(QStringLiteral("Nie mozna zapisac domow: %1").arg(path));
+    targetPath = QFileInfo(mapPath).dir().filePath(m_houseFile);
+    data.clear();
+    QBuffer buffer(&data);
+    if (!buffer.open(QIODevice::WriteOnly)) {
+        setError(QStringLiteral("Cannot prepare house data"));
         return false;
     }
 
-    QXmlStreamWriter xml(&f);
+    QXmlStreamWriter xml(&buffer);
     xml.setAutoFormatting(true);
     xml.setAutoFormattingIndent(-1);
     xml.writeStartDocument();
@@ -975,8 +1360,8 @@ bool OtbmReader::saveHousesXml(const QString &mapPath)
     }
     xml.writeEndElement();
     xml.writeEndDocument();
-    if (!f.commit()) {
-        setError(QStringLiteral("Blad zapisu domow: %1").arg(path));
+    if (xml.hasError()) {
+        setError(QStringLiteral("Failed to build house XML: %1").arg(targetPath));
         return false;
     }
     return true;
@@ -1020,6 +1405,7 @@ int OtbmReader::addHouse(int townId)
     h.name = QStringLiteral("Unnamed House #%1").arg(h.id);
     h.townId = townId;
     m_houses.push_back(std::move(h));
+    m_housesModified = true;
     emit mapChanged();
     return static_cast<int>(maxId + 1);
 }
@@ -1029,6 +1415,7 @@ void OtbmReader::setHouseTownId(int id, int townId)
     OtbmHouse *h = houseById(id);
     if (!h || h->townId == townId) return;
     h->townId = townId;
+    m_housesModified = true;
     emit mapChanged();
 }
 
@@ -1038,7 +1425,8 @@ void OtbmReader::removeHouse(int id)
                            [id](const OtbmHouse &h) { return static_cast<int>(h.id) == id; });
     if (it == m_houses.end()) return;
     m_houses.erase(it);
-    // Kafle domu tracia przypisanie (jak RME przy kasowaniu domu) - jedno cofniecie.
+    m_housesModified = true;
+
     beginUndoGroup();
     for (OtbmTile &t : m_tiles)
         if (t.is_house && static_cast<int>(t.house_id) == id)
@@ -1052,6 +1440,7 @@ void OtbmReader::setHouseName(int id, const QString &name)
     OtbmHouse *h = houseById(id);
     if (!h || h->name == name || name.isEmpty()) return;
     h->name = name;
+    m_housesModified = true;
     emit mapChanged();
 }
 
@@ -1060,6 +1449,7 @@ void OtbmReader::setHouseRent(int id, int rent)
     OtbmHouse *h = houseById(id);
     if (!h || h->rent == rent || rent < 0) return;
     h->rent = rent;
+    m_housesModified = true;
     emit mapChanged();
 }
 
@@ -1069,18 +1459,20 @@ void OtbmReader::setHouseEntry(int id, int x, int y, int z)
     if (!h) return;
     if (h->entryX == x && h->entryY == y && h->entryZ == z) return;
     h->entryX = x; h->entryY = y; h->entryZ = z;
+    m_housesModified = true;
     emit mapChanged();
 }
 
 bool OtbmReader::setHouseTileAt(int x, int y, int z, uint32_t houseId)
 {
     if (houseId == 0) return clearHouseTileAt(x, y, z);
-    OtbmTile *t = tileForSpawnEdit(x, y, z);   // recordTile + kafel (moze powstac)
+    OtbmTile *t = tileForSpawnEdit(x, y, z);
     if (!t) return false;
     if (t->is_house && t->house_id == houseId) return true;
     t->is_house = true;
     t->house_id = houseId;
-    t->flags |= static_cast<uint32_t>(OtbmTileFlag::TileProtection);   // RME: dom = PZ
+    t->flags |= static_cast<uint32_t>(OtbmTileFlag::TileProtection);
+    if (m_housesXmlLoaded) m_housesModified = true;
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
@@ -1094,7 +1486,8 @@ bool OtbmReader::clearHouseTileAt(int x, int y, int z)
     recordTile(x, y, z);
     t.is_house = false;
     t.house_id = 0;
-    t.flags &= ~static_cast<uint32_t>(OtbmTileFlag::TileProtection);   // RME: undraw zdejmuje PZ
+    t.flags &= ~static_cast<uint32_t>(OtbmTileFlag::TileProtection);
+    if (m_housesXmlLoaded) m_housesModified = true;
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
@@ -1104,8 +1497,9 @@ bool OtbmReader::setSpawnAt(int x, int y, int z, int radius)
     if (radius <= 0) return clearSpawnAt(x, y, z);
     OtbmTile *t = tileForSpawnEdit(x, y, z);
     if (!t) return false;
-    if (t->spawn_radius == radius) return true;   // bez zmian (snapshot juz zdjety - grupa go zdedupuje)
+    if (t->spawn_radius == radius) return true;
     t->spawn_radius = radius;
+    m_spawnsModified = true;
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
@@ -1115,9 +1509,13 @@ bool OtbmReader::setCreatureAt(int x, int y, int z, const QString &name, int spa
     if (name.isEmpty()) return clearCreatureAt(x, y, z);
     OtbmTile *t = tileForSpawnEdit(x, y, z);
     if (!t) return false;
+    const int effectiveSpawnTime = spawntime > 0 ? spawntime : 60;
+    if (t->creature_name == name && t->creature_spawntime == effectiveSpawnTime
+        && t->creature_is_npc == isNpc) return true;
     t->creature_name = name;
-    t->creature_spawntime = spawntime > 0 ? spawntime : 60;
+    t->creature_spawntime = effectiveSpawnTime;
     t->creature_is_npc = isNpc;
+    m_spawnsModified = true;
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
@@ -1130,6 +1528,7 @@ bool OtbmReader::clearSpawnAt(int x, int y, int z)
     if (t.spawn_radius == 0) return false;
     recordTile(x, y, z);
     t.spawn_radius = 0;
+    m_spawnsModified = true;
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
@@ -1142,6 +1541,7 @@ bool OtbmReader::clearCreatureAt(int x, int y, int z)
     if (t.creature_name.isEmpty()) return false;
     recordTile(x, y, z);
     t.creature_name.clear();
+    m_spawnsModified = true;
     if (!m_undoGrouping) emit mapChanged();
     return true;
 }
@@ -1158,18 +1558,14 @@ bool OtbmReader::setTopItemCount(int x, int y, int z, uint16_t count)
     }
     OtbmMapItem &top = tile.items.back();
     if (top.count == count) {
-        return false;   // bez zmian - nie smiec undo
+        return false;
     }
-    recordTile(x, y, z);   // undo: stan przed zmiana
+    recordTile(x, y, z);
     top.count = count;
-    if (!m_undoGrouping) emit mapChanged();   // patrz komentarz w placeItem()
+    if (!m_undoGrouping) emit mapChanged();
     return true;
 }
 
-// Wspolny szkielet setterow atrybutow wierzchniego itemu: znajdz kafel, wez
-// wierzchni item, zapisz snapshot undo i zastosuj mutacje. Zwraca false gdy nie
-// ma czego edytowac albo gdy mutacja nic nie zmienila (nie smiecimy undo).
-// mut() dostaje item i zwraca true, jesli faktycznie cos zmienil.
 template <typename Mut>
 bool OtbmReader::mutateTopItem(int x, int y, int z, Mut mut)
 {
@@ -1178,12 +1574,10 @@ bool OtbmReader::mutateTopItem(int x, int y, int z, Mut mut)
     OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
     if (tile.items.empty()) return false;
 
-    // Sprawdzamy na KOPII, czy mutacja cokolwiek zmieni - inaczej kazde otwarcie
-    // okna Properties z niezmienionym polem wrzucaloby pusty wpis na stos undo.
     OtbmMapItem probe = tile.items.back();
     if (!mut(probe)) return false;
 
-    recordTile(x, y, z);   // undo: stan przed zmiana
+    recordTile(x, y, z);
     mut(tile.items.back());
     if (!m_undoGrouping) emit mapChanged();
     return true;
@@ -1212,7 +1606,7 @@ bool OtbmReader::setTopItemText(int x, int y, int z, const QString &text)
     return mutateTopItem(x, y, z, [&text](OtbmMapItem &i) {
         const QString cur = i.extra ? i.extra->text : QString();
         if (cur == text) return false;
-        // Pusty tekst na itemie bez innych atrybutow: nie alokuj extra po nic.
+
         if (text.isEmpty() && !i.extra) return false;
         i.ensureExtra().text = text;
         return true;
@@ -1278,10 +1672,10 @@ int OtbmReader::replaceItemsOnMap(uint16_t fromId, uint16_t toId)
     if (fromId == 0 || toId == 0 || fromId == toId) return 0;
     int n = 0;
     m_lastAffected.clear();
-    beginUndoGroup();               // cala mapa = jedno cofniecie
+    beginUndoGroup();
     for (OtbmTile &t : m_tiles) {
         if (!hasMatch(t.items, fromId)) continue;
-        recordTile(t.x, t.y, t.z);  // undo: stan przed zmiana
+        recordTile(t.x, t.y, t.z);
         n += replaceMatches(t.items, fromId, toId);
         m_lastAffected.push_back({ t.x, t.y, t.z });
     }
@@ -1321,15 +1715,15 @@ bool OtbmReader::setTileFlags(int x, int y, int z, uint32_t flags)
 {
     auto it = m_posIndex.find(posKey3d(x, y, z));
     if (it == m_posIndex.end()) {
-        return false;   // strefy tylko na istniejacych kafelkach (jak RME)
+        return false;
     }
     OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
     if (tile.flags == flags) {
-        return false;   // bez zmian - nie smiec undo
+        return false;
     }
-    recordTile(x, y, z); // undo: stan przed zmiana
+    recordTile(x, y, z);
     tile.flags = flags;
-    if (!m_undoGrouping) emit mapChanged();   // patrz komentarz w placeItem()
+    if (!m_undoGrouping) emit mapChanged();
     return true;
 }
 
@@ -1343,10 +1737,10 @@ bool OtbmReader::removeTopItem(int x, int y, int z)
     if (tile.items.empty()) {
         return false;
     }
-    recordTile(x, y, z); // undo: stan przed usunieciem
+    recordTile(x, y, z);
     m_itemCount -= countItems(tile.items.back());
     tile.items.pop_back();
-    if (!m_undoGrouping) emit mapChanged();   // patrz komentarz w placeItem()
+    if (!m_undoGrouping) emit mapChanged();
     return true;
 }
 
@@ -1357,7 +1751,6 @@ int OtbmReader::removeItemsById(int x, int y, int z, const std::vector<uint16_t>
     if (it == m_posIndex.end()) return 0;
     OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
 
-    // Najpierw sprawdz czy jest co usuwac - inaczej niepotrzebny snapshot undo.
     bool any = false;
     if (deep) {
         for (uint16_t id : ids) if (hasMatch(tile.items, id)) { any = true; break; }
@@ -1367,15 +1760,14 @@ int OtbmReader::removeItemsById(int x, int y, int z, const std::vector<uint16_t>
     }
     if (!any) return 0;
 
-    recordTile(x, y, z);   // undo: stan przed usunieciem
+    recordTile(x, y, z);
     int removed = 0;
     if (deep) {
         int removedNodes = 0;
         removed = removeMatches(tile.items, ids, removedNodes);
         m_itemCount -= removedNodes;
     } else {
-        // Plytko: sciezka borderow. Border nigdy nie lezy w kontenerze, a recomputeBorders
-        // wola to na kazdym kaflu - nie ma po co schodzic w zawartosc toreb.
+
         for (auto vit = tile.items.begin(); vit != tile.items.end(); ) {
             if (std::find(ids.begin(), ids.end(), vit->server_id) != ids.end()) {
                 m_itemCount -= countItems(*vit);
@@ -1394,9 +1786,6 @@ void OtbmReader::recordTile(int x, int y, int z)
 {
     const quint64 key = posKey3d(x, y, z);
 
-    // Dedup PRZED zbudowaniem snapshotu: snap.items to kopia calego stosu kafla, a
-    // w grupie (pociagniecie/prostokat) ten sam kafel wraca wielokrotnie (ground +
-    // kazdy border). Kopiowanie i wyrzucanie tego bylo czysta strata.
     if (m_undoGrouping && m_groupRecorded.contains(key)) return;
 
     TileSnapshot snap;
@@ -1404,16 +1793,15 @@ void OtbmReader::recordTile(int x, int y, int z)
     auto it = m_posIndex.find(key);
     if (it != m_posIndex.end()) {
         const OtbmTile &t = m_tiles[static_cast<size_t>(it.value())];
-        snap.items = t.items;   // kopia (przed zmiana)
-        snap.flags = t.flags;   // strefy - inaczej undo nie cofnie malowania PZ
-        snap.spawn_radius = t.spawn_radius;          // spawny - jak wyzej
+        snap.items = t.items;
+        snap.flags = t.flags;
+        snap.spawn_radius = t.spawn_radius;
         snap.creature_name = t.creature_name;
         snap.creature_spawntime = t.creature_spawntime;
         snap.creature_is_npc = t.creature_is_npc;
-        snap.is_house = t.is_house;                  // domy - jak wyzej
+        snap.is_house = t.is_house;
         snap.house_id = t.house_id;
     }
-    // jesli kafelek nie istnieje, snap.items zostaje puste
 
     if (m_undoGrouping) {
         m_groupRecorded.insert(key);
@@ -1432,7 +1820,7 @@ void OtbmReader::pushUndo(UndoAction &&action)
     while (static_cast<int>(m_undoStack.size()) > m_undoLimit) {
         m_undoStack.pop_front();
     }
-    // Nowa edycja uniewaznia sciezke redo (galaz historii sie rozeszla).
+
     m_redoStack.clear();
 }
 
@@ -1444,7 +1832,7 @@ OtbmReader::TileSnapshot OtbmReader::currentSnapshot(int x, int y, int z) const
     if (it != m_posIndex.end()) {
         const OtbmTile &t = m_tiles[static_cast<size_t>(it.value())];
         snap.items = t.items;
-        snap.flags = t.flags;   // strefy (do redo)
+        snap.flags = t.flags;
         snap.spawn_radius = t.spawn_radius;
         snap.creature_name = t.creature_name;
         snap.creature_spawntime = t.creature_spawntime;
@@ -1452,7 +1840,7 @@ OtbmReader::TileSnapshot OtbmReader::currentSnapshot(int x, int y, int z) const
         snap.is_house = t.is_house;
         snap.house_id = t.house_id;
     }
-    return snap;   // kafelek nie istnieje -> snapshot pusty
+    return snap;
 }
 
 void OtbmReader::beginUndoGroup()
@@ -1471,7 +1859,7 @@ void OtbmReader::endUndoGroup()
         pushUndo(std::move(m_currentGroup));
     }
     m_currentGroup = UndoAction{};
-    if (pushed) emit mapChanged(); // odswiez undoCount w UI
+    if (pushed) emit mapChanged();
 }
 
 void OtbmReader::setUndoLimit(int n)
@@ -1488,9 +1876,18 @@ void OtbmReader::restoreSnapshot(const TileSnapshot &snap)
     auto it = m_posIndex.find(key);
     if (it != m_posIndex.end()) {
         OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
+        if (tile.spawn_radius != snap.spawn_radius
+            || tile.creature_name != snap.creature_name
+            || tile.creature_spawntime != snap.creature_spawntime
+            || tile.creature_is_npc != snap.creature_is_npc) {
+            m_spawnsModified = true;
+        }
+        if (m_housesXmlLoaded
+            && (tile.is_house != snap.is_house || tile.house_id != snap.house_id))
+            m_housesModified = true;
         for (const OtbmMapItem &item : tile.items) m_itemCount -= countItems(item);
         tile.items = snap.items;
-        tile.flags = snap.flags;   // przywroc strefy (PZ itp.)
+        tile.flags = snap.flags;
         tile.spawn_radius = snap.spawn_radius;
         tile.creature_name = snap.creature_name;
         tile.creature_spawntime = snap.creature_spawntime;
@@ -1500,7 +1897,7 @@ void OtbmReader::restoreSnapshot(const TileSnapshot &snap)
         for (const OtbmMapItem &item : tile.items) m_itemCount += countItems(item);
     } else if (!snap.items.empty() || snap.spawn_radius > 0 || !snap.creature_name.isEmpty()
                || snap.is_house) {
-        // Kafelek zniknal, a powinien miec zawartosc (itemy/spawn/potwora) - odtworz.
+
         OtbmTile tile;
         tile.x = static_cast<uint16_t>(snap.x);
         tile.y = static_cast<uint16_t>(snap.y);
@@ -1513,11 +1910,13 @@ void OtbmReader::restoreSnapshot(const TileSnapshot &snap)
         tile.creature_is_npc = snap.creature_is_npc;
         tile.is_house = snap.is_house;
         tile.house_id = snap.house_id;
+        if (snap.spawn_radius > 0 || !snap.creature_name.isEmpty()) m_spawnsModified = true;
+        if (m_housesXmlLoaded && snap.is_house) m_housesModified = true;
         for (const OtbmMapItem &item : tile.items) m_itemCount += countItems(item);
         m_posIndex.insert(key, static_cast<int>(m_tiles.size()));
         m_tiles.push_back(std::move(tile));
     }
-    // Kafelek nie istnial i snapshot pusty -> nic (zostawiamy ew. pusty kafelek).
+
 }
 
 bool OtbmReader::undo()
@@ -1526,8 +1925,6 @@ bool OtbmReader::undo()
     UndoAction action = std::move(m_undoStack.back());
     m_undoStack.pop_back();
 
-    // Zbuduj akcje przeciwna (redo) = BIEZACY stan kafli PRZED przywroceniem, by
-    // redo mogl je odtworzyc. Tej sciezki NIE czyscimy (to nie nowa edycja).
     UndoAction redoAction;
     redoAction.tiles.reserve(action.tiles.size());
     for (const TileSnapshot &snap : action.tiles)
@@ -1550,7 +1947,6 @@ bool OtbmReader::redo()
     UndoAction action = std::move(m_redoStack.back());
     m_redoStack.pop_back();
 
-    // Akcja przeciwna wraca na stos undo (bez czyszczenia redo - patrz pushUndo).
     UndoAction undoAction;
     undoAction.tiles.reserve(action.tiles.size());
     for (const TileSnapshot &snap : action.tiles)
@@ -1570,17 +1966,44 @@ bool OtbmReader::redo()
 bool OtbmReader::saveFile(const QString &path)
 {
     if (!m_loaded) {
-        setError(QStringLiteral("Brak wczytanej mapy do zapisu"));
+        setError(QStringLiteral("No loaded map to save"));
         return false;
     }
 
-    // Spawny/domy PRZED naglowkiem OTBM: save*Xml moze ustawic m_spawnFile/
-    // m_houseFile dla nowej mapy, a Ext*File w naglowku musi juz to widziec.
-    if (!saveSpawnsXml(path)) return false;
-    if (!saveHousesXml(path)) return false;
+    const QString oldSpawnFile = m_spawnFile;
+    const QString oldHouseFile = m_houseFile;
+    const QString oldDescription = m_description;
+    auto restoreDocumentMetadata = [this, &oldSpawnFile, &oldHouseFile, &oldDescription]() {
+        m_spawnFile = oldSpawnFile;
+        m_houseFile = oldHouseFile;
+        m_description = oldDescription;
+    };
+
+    QString spawnTarget;
+    QString houseTarget;
+    QByteArray spawnData;
+    QByteArray houseData;
+    if (!buildSpawnsXml(path, spawnTarget, spawnData)
+        || !buildHousesXml(path, houseTarget, houseData)) {
+        const QString error = m_errorString;
+        restoreDocumentMetadata();
+        setError(error);
+        return false;
+    }
+    auto sameTarget = [](const QString &a, const QString &b) {
+        if (a.isEmpty() || b.isEmpty()) return false;
+        return QFileInfo(a).absoluteFilePath().compare(QFileInfo(b).absoluteFilePath(),
+                                                       Qt::CaseInsensitive) == 0;
+    };
+    if (sameTarget(spawnTarget, houseTarget) || sameTarget(spawnTarget, path)
+        || sameTarget(houseTarget, path)) {
+        restoreDocumentMetadata();
+        setError(QStringLiteral("The OTBM, spawn, and house files must use different paths"));
+        return false;
+    }
 
     NodeWriter w;
-    // 4-bajtowy naglowek wersji (0).
+
     w.raw(0); w.raw(0); w.raw(0); w.raw(0);
 
     w.start(static_cast<uint8_t>(OtbmNode::RootHeader));
@@ -1591,18 +2014,13 @@ bool OtbmReader::saveFile(const QString &path)
     w.u32(m_otbItemsMinor);
 
     w.start(static_cast<uint8_t>(OtbmNode::MapData));
-    // Opis = wylacznie stempel edytora. Stare linie (stemple innych edytorow,
-    // "Template map :)" itp.) wypadaja - nie mamy edytora opisu w UI, wiec ich
-    // zachowywanie tylko wleklo smieci z cudzych szablonow. m_description tez
-    // aktualizujemy, inaczej Map Properties pokazywaloby stary opis (np. RME)
-    // az do ponownego wczytania pliku.
+
     m_description = QStringLiteral("Saved with Dewral Map Editor 1.0");
     w.data(static_cast<uint8_t>(OtbmAttribute::Description));
     w.str(m_description);
     if (!m_spawnFile.isEmpty()) { w.data(static_cast<uint8_t>(OtbmAttribute::ExtSpawnFile)); w.str(m_spawnFile); }
     if (!m_houseFile.isEmpty()) { w.data(static_cast<uint8_t>(OtbmAttribute::ExtHouseFile)); w.str(m_houseFile); }
 
-    // Grupowanie kafelkow w obszary 256x256 (dzielace baseX/baseY/baseZ).
     QHash<quint64, std::vector<const OtbmTile *>> areas;
     for (const OtbmTile &tile : m_tiles) {
         const int areaX = tile.x & 0xFF00;
@@ -1634,16 +2052,15 @@ bool OtbmReader::saveFile(const QString &path)
                 w.data(static_cast<uint8_t>(OtbmAttribute::TileFlags));
                 w.u32(tile->flags);
             }
-            // Itemy zapisujemy jako wezly-dzieci (pierwszy = ground; czytniki to akceptuja).
+
             for (const OtbmMapItem &item : tile->items) {
                 writeMapItem(w, item);
             }
-            w.end(); // tile
+            w.end();
         }
-        w.end(); // tile area
+        w.end();
     }
 
-    // Miasta.
     if (!m_towns.empty()) {
         w.start(static_cast<uint8_t>(OtbmNode::Towns));
         for (const OtbmTown &town : m_towns) {
@@ -1658,7 +2075,6 @@ bool OtbmReader::saveFile(const QString &path)
         w.end();
     }
 
-    // Waypointy.
     if (!m_waypoints.empty()) {
         w.start(static_cast<uint8_t>(OtbmNode::Waypoints));
         for (const OtbmWaypoint &wp : m_waypoints) {
@@ -1672,24 +2088,119 @@ bool OtbmReader::saveFile(const QString &path)
         w.end();
     }
 
-    w.end(); // MapData
-    w.end(); // root
+    w.end();
+    w.end();
 
-    // QSaveFile: zapis idzie do pliku tymczasowego i dopiero commit() atomowo go
-    // podmienia na docelowy. Awaria w trakcie (brak miejsca, crash, wyciagniety
-    // pendrive) zostawia STARY plik nienaruszony, zamiast urwanej mapy - bez tego
-    // nieudany zapis kasowal jedyna kopie mapy uzytkownika.
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        setError(QStringLiteral("Nie mozna zapisac pliku: %1").arg(path));
+    struct ExternalBackup {
+        QString path;
+        QByteArray data;
+        bool existed = false;
+    };
+    ExternalBackup spawnBackup;
+    ExternalBackup houseBackup;
+
+    auto captureBackup = [this](const QString &target, ExternalBackup &backup,
+                                const QString &label) {
+        if (target.isEmpty()) return true;
+        backup.path = target;
+        backup.existed = QFileInfo::exists(target);
+        if (!backup.existed) return true;
+        QFile original(target);
+        if (!original.open(QIODevice::ReadOnly)) {
+            setError(QStringLiteral("Cannot back up the existing file %1: %2")
+                         .arg(label, target));
+            return false;
+        }
+        backup.data = original.readAll();
+        if (original.error() != QFileDevice::NoError) {
+            setError(QStringLiteral("Failed to read the existing file %1: %2")
+                         .arg(label, target));
+            return false;
+        }
+        return true;
+    };
+
+    if (!captureBackup(spawnTarget, spawnBackup, QStringLiteral("spawn file"))
+        || !captureBackup(houseTarget, houseBackup, QStringLiteral("house file"))) {
+        const QString error = m_errorString;
+        restoreDocumentMetadata();
+        setError(error);
         return false;
     }
-    const qint64 written = file.write(w.buf);
-    if (written != w.buf.size() || !file.commit()) {
-        setError(QStringLiteral("Blad zapisu pliku: %1").arg(path));
+
+    QSaveFile spawnOutput(spawnTarget);
+    QSaveFile houseOutput(houseTarget);
+    QSaveFile mapOutput(path);
+    auto stage = [this](QSaveFile &output, const QString &target,
+                        const QByteArray &data, const QString &label) {
+        if (target.isEmpty()) return true;
+        if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            || output.write(data) != data.size()) {
+            setError(QStringLiteral("Cannot prepare file %1: %2")
+                         .arg(label, target));
+            return false;
+        }
+        return true;
+    };
+
+    if (!stage(spawnOutput, spawnTarget, spawnData, QStringLiteral("spawn file"))
+        || !stage(houseOutput, houseTarget, houseData, QStringLiteral("house file"))
+        || !stage(mapOutput, path, w.buf, QStringLiteral("map file"))) {
+        const QString error = m_errorString;
+        restoreDocumentMetadata();
+        setError(error);
         return false;
     }
-    if (m_filePath != path) {   // Save As - dokument zmienia tozsamosc
+
+    auto restoreBackup = [](const ExternalBackup &backup) {
+        if (backup.path.isEmpty()) return true;
+        if (!backup.existed)
+            return !QFileInfo::exists(backup.path) || QFile::remove(backup.path);
+        QSaveFile output(backup.path);
+        return output.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            && output.write(backup.data) == backup.data.size()
+            && output.commit();
+    };
+    auto rollback = [&](bool spawnCommitted, bool houseCommitted,
+                        const QString &originalError) {
+        bool restored = true;
+        if (houseCommitted) restored = restoreBackup(houseBackup) && restored;
+        if (spawnCommitted) restored = restoreBackup(spawnBackup) && restored;
+        restoreDocumentMetadata();
+        setError(restored
+            ? originalError
+            : originalError + QStringLiteral("; warning: not all XML files could be restored"));
+        return false;
+    };
+
+    bool spawnCommitted = false;
+    bool houseCommitted = false;
+    if (!spawnTarget.isEmpty()) {
+        if (!spawnOutput.commit())
+            return rollback(false, false,
+                            QStringLiteral("Failed to commit spawn file: %1").arg(spawnTarget));
+        spawnCommitted = true;
+    }
+    if (!houseTarget.isEmpty()) {
+        if (!houseOutput.commit())
+            return rollback(spawnCommitted, false,
+                            QStringLiteral("Failed to commit house file: %1").arg(houseTarget));
+        houseCommitted = true;
+    }
+    if (!mapOutput.commit())
+        return rollback(spawnCommitted, houseCommitted,
+                        QStringLiteral("Failed to commit map file: %1").arg(path));
+
+    if (!spawnTarget.isEmpty() || m_spawnFile.isEmpty()) {
+        m_spawnsXmlLoaded = true;
+        m_spawnsModified = false;
+    }
+    if (!houseTarget.isEmpty() || m_houseFile.isEmpty()) {
+        m_housesXmlLoaded = true;
+        m_housesModified = false;
+    }
+
+    if (m_filePath != path) {
         m_filePath = path;
         emit filePathChanged();
     }
@@ -1700,20 +2211,19 @@ bool OtbmReader::saveFile(const QString &path)
 int OtbmReader::suggestedClientVersion() const
 {
     if (!m_loaded) return 0;
-    // Tabela id -> wersja klienta, 1:1 z clients.xml RME (<otb client=... id=.../>).
-    // Id to otbItemsMinorVersion z naglowka OTBM.
+
     static const int table[] = {
-        0,    740,  755,  772,  780,  790,  792,  800,  810,  811,  // 0-9
-        820,  830,  840,  841,  842,  850,  854,  854,  855,  860,  // 10-19
-        860,  861,  862,  870,  871,  872,  873,  900,  910,  920,  // 20-29
-        940,  944,  944,  944,  944,  946,  950,  952,  953,  954,  // 30-39
-        960,  961,  963,  970,  980,  981,  982,  983,  985,  986,  // 40-49
-        1010, 1020, 1021, 1030, 1031, 1041, 1077, 1098, 10100       // 50-58
+        0,    740,  755,  772,  780,  790,  792,  800,  810,  811,
+        820,  830,  840,  841,  842,  850,  854,  854,  855,  860,
+        860,  861,  862,  870,  871,  872,  873,  900,  910,  920,
+        940,  944,  944,  944,  944,  946,  950,  952,  953,  954,
+        960,  961,  963,  970,  980,  981,  982,  983,  985,  986,
+        1010, 1020, 1021, 1030, 1031, 1041, 1077, 1098, 10100
     };
     const int id = static_cast<int>(m_otbItemsMinor);
     if (id >= 1 && id < static_cast<int>(sizeof(table) / sizeof(table[0])))
         return table[id];
-    // Nowsze/nieznane id: zalozenie 10.98+ (najczestszy przypadek nowych OTB).
+
     return id > 0 ? 1098 : 0;
 }
 

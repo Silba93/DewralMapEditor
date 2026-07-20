@@ -1,0 +1,483 @@
+import QtQuick
+import QtQuick.Controls
+import Tibia 1.0
+import "../style"
+
+TibiaMenuBar {
+    id: menuBar
+    required property var appController
+    required property var mapView
+    required property var mapGl
+    required property var settings
+    required property var titleBarItem
+    required property var startupWindow
+    required property var saveDialog
+    required property var newMapDialog
+    required property var selectionItemDialog
+    required property var goToDialog
+    required property var townsDialog
+    required property var mapPropertiesDialog
+    required property var statsDialog
+    required property var brushEditorDialog
+    required property var themeDialog
+    required property var borderizeConfirm
+    required property var randomizeConfirm
+
+    anchors.verticalCenter: menuBar.titleBarItem.verticalCenter
+    anchors.verticalCenterOffset: -4
+    anchors.left: menuBar.titleBarItem.left
+    anchors.leftMargin: 4
+
+    TibiaMenu {
+        title: "File"
+        Action {
+            text: "New..."
+            shortcut: "Ctrl+N"
+            onTriggered: menuBar.newMapDialog.open()
+        }
+        Action {
+            text: "Open..."
+            shortcut: "Ctrl+O"
+            onTriggered: menuBar.startupWindow.openMapDialog()
+        }
+        Action {
+            text: "Save"
+            shortcut: "Ctrl+S"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.appController.saveMap()
+        }
+
+        Action {
+            text: "Save As..."
+            shortcut: "Ctrl+Shift+S"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.saveDialog.open()
+        }
+        MenuSeparator {}
+
+        Action {
+            text: "Close map"
+            shortcut: "Ctrl+Q"
+            onTriggered: menuBar.appController.closeTab(Backend.docMgr.currentIndex)
+        }
+        Action {
+            text: "Exit"
+            onTriggered: menuBar.appController.requestAppClose()
+        }
+    }
+
+    TibiaMenu {
+        title: "Edit"
+        Action {
+            text: "Undo"
+            shortcut: "Ctrl+Z"
+            enabled: Backend.otbmReader.undoCount > 0
+            onTriggered: menuBar.mapView.undo()
+        }
+        Action {
+
+            text: "Redo"
+            shortcut: "Ctrl+Shift+Z"
+            enabled: Backend.otbmReader.redoCount > 0
+            onTriggered: menuBar.mapView.redo()
+        }
+        MenuSeparator {}
+
+        Action {
+            text: "Find Item..."
+            shortcut: "Ctrl+F"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: {
+                menuBar.selectionItemDialog.mode = "find";
+                menuBar.selectionItemDialog.scope = "map";
+                menuBar.selectionItemDialog.open();
+            }
+        }
+        Action {
+            text: "Replace Items..."
+            shortcut: "Ctrl+Shift+F"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: {
+                menuBar.selectionItemDialog.mode = "replace";
+                menuBar.selectionItemDialog.scope = "map";
+                menuBar.selectionItemDialog.open();
+            }
+        }
+        MenuSeparator {}
+
+        TibiaMenu {
+            title: "Border Options"
+            Action {
+                text: "Border Automagic"
+                shortcut: "A"
+                checkable: true
+                checked: menuBar.mapView.automagic
+                onTriggered: menuBar.mapView.automagic = !menuBar.mapView.automagic
+            }
+            MenuSeparator {}
+            Action {
+                text: "Borderize Selection"
+                shortcut: "Ctrl+B"
+                enabled: menuBar.mapView.selectionCount > 0
+                onTriggered: menuBar.mapView.borderizeSelection()
+            }
+            Action {
+                text: "Borderize Map"
+                enabled: Backend.otbmReader.loaded
+                onTriggered: menuBar.borderizeConfirm.open()
+            }
+            Action {
+                text: "Randomize Selection"
+                enabled: menuBar.mapView.selectionCount > 0
+                onTriggered: menuBar.mapView.randomizeSelection()
+            }
+            Action {
+                text: "Randomize Map"
+                enabled: Backend.otbmReader.loaded
+                onTriggered: menuBar.randomizeConfirm.open()
+            }
+        }
+
+        TibiaMenu {
+            title: "Other Options"
+            Action {
+                text: "Remove Items by ID..."
+                enabled: Backend.otbmReader.loaded
+                onTriggered: {
+                    menuBar.selectionItemDialog.mode = "remove";
+                    menuBar.selectionItemDialog.scope = "map";
+                    menuBar.selectionItemDialog.open();
+                }
+            }
+        }
+        MenuSeparator {}
+
+        Action {
+            text: "Go to Previous Position"
+            shortcut: "P"
+            enabled: menuBar.mapView.hasPreviousPosition()
+            onTriggered: menuBar.mapView.goToPreviousPosition()
+        }
+        Action {
+            text: "Go to Position..."
+            shortcut: "Ctrl+G"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.goToDialog.open()
+        }
+        MenuSeparator {}
+
+        Action {
+            text: "Cut"
+            shortcut: "Ctrl+X"
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: menuBar.mapView.cutSelection()
+        }
+        Action {
+            text: "Copy"
+            shortcut: "Ctrl+C"
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: menuBar.mapView.copySelection()
+        }
+        Action {
+            text: "Paste"
+            shortcut: "Ctrl+V"
+            enabled: menuBar.mapView.hasClipboard
+            onTriggered: menuBar.mapView.startPasting()
+        }
+    }
+
+    TibiaMenu {
+        title: "Map"
+        Action {
+            text: "Edit Towns"
+            shortcut: "Ctrl+T"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.townsDialog.open()
+        }
+
+        TibiaMenu {
+            id: mapProfileMenu
+            title: "Client profile"
+            Instantiator {
+                model: menuBar.appController.configuredProfileKeys()
+                delegate: TibiaMenuItem {
+                    required property string modelData
+                    text: menuBar.appController.profileLabel(modelData)
+                    checkable: true
+                    checked: menuBar.appController.loadedClientKey === modelData
+                    onTriggered: menuBar.appController.switchMapProfile(modelData)
+                }
+                onObjectAdded: (index, object) => mapProfileMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => mapProfileMenu.removeItem(object)
+            }
+        }
+        Action {
+            text: "Edit Items"
+            enabled: false
+        }
+        Action {
+            text: "Edit Monsters"
+            enabled: false
+        }
+        MenuSeparator {}
+        Action {
+            text: "Go To Position..."
+            shortcut: "Ctrl+G"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.goToDialog.open()
+        }
+        MenuSeparator {}
+        Action {
+            text: "Cleanup..."
+            enabled: false
+        }
+        Action {
+            text: "Properties..."
+            shortcut: "Ctrl+P"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.mapPropertiesDialog.open()
+        }
+        Action {
+            text: "Statistics"
+            shortcut: "F8"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.statsDialog.open()
+        }
+    }
+
+    TibiaMenu {
+        title: "Select"
+        Action {
+            text: "Replace Items on Selection..."
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: {
+                menuBar.selectionItemDialog.mode = "replace";
+                menuBar.selectionItemDialog.scope = "selection";
+                menuBar.selectionItemDialog.open();
+            }
+        }
+        Action {
+            text: "Find Item on Selection..."
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: {
+                menuBar.selectionItemDialog.mode = "find";
+                menuBar.selectionItemDialog.scope = "selection";
+                menuBar.selectionItemDialog.open();
+            }
+        }
+        Action {
+            text: "Remove Item on Selection..."
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: {
+                menuBar.selectionItemDialog.mode = "remove";
+                menuBar.selectionItemDialog.scope = "selection";
+                menuBar.selectionItemDialog.open();
+            }
+        }
+        MenuSeparator {}
+
+        TibiaMenu {
+            title: "Selection Mode"
+            Action {
+                text: "Compensate Selection"
+                checkable: true
+                checked: menuBar.mapView.compensatedSelect
+                onTriggered: menuBar.mapView.compensatedSelect = !menuBar.mapView.compensatedSelect
+            }
+            MenuSeparator {}
+            Action {
+                text: "Current Floor"
+                checkable: true
+                checked: menuBar.mapView.selectionFloors === 0
+                onTriggered: menuBar.mapView.selectionFloors = 0
+            }
+            Action {
+                text: "Lower Floors"
+                checkable: true
+                checked: menuBar.mapView.selectionFloors === 1
+                onTriggered: menuBar.mapView.selectionFloors = 1
+            }
+            Action {
+                text: "Visible Floors"
+                checkable: true
+                checked: menuBar.mapView.selectionFloors === 2
+                onTriggered: menuBar.mapView.selectionFloors = 2
+            }
+        }
+        MenuSeparator {}
+        Action {
+            text: "Borderize Selection"
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: menuBar.mapView.borderizeSelection()
+        }
+        Action {
+            text: "Randomize Selection"
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: menuBar.mapView.randomizeSelection()
+        }
+        MenuSeparator {}
+        Action {
+            text: "Clear Selection"
+            enabled: menuBar.mapView.selectionCount > 0
+            onTriggered: menuBar.mapView.clearSelection()
+        }
+    }
+
+    TibiaMenu {
+        title: "Tools"
+
+        Action {
+            text: "Brush Editor..."
+            enabled: Backend.otbReader.loaded
+            onTriggered: menuBar.brushEditorDialog.open()
+        }
+    }
+
+    TibiaMenu {
+        title: "View"
+        Action {
+            text: "Zoom In"
+            shortcut: "Ctrl++"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.mapView.zoomSteps(1)
+        }
+        Action {
+            text: "Zoom Out"
+            shortcut: "Ctrl+-"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.mapView.zoomSteps(-1)
+        }
+        Action {
+            text: "Zoom Normal"
+            shortcut: "Ctrl+0"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.mapView.tileSize = 32
+        }
+        MenuSeparator {}
+        Action {
+            text: "Show shade"
+            shortcut: "Q"
+            checkable: true
+            checked: menuBar.mapView.showShade
+            onTriggered: menuBar.mapView.showShade = !menuBar.mapView.showShade
+        }
+        Action {
+            text: "Show lower floors"
+            shortcut: "Ctrl+W"
+            checkable: true
+            checked: menuBar.mapView.showLowerFloors
+            onTriggered: menuBar.mapView.showLowerFloors = !menuBar.mapView.showLowerFloors
+        }
+        Action {
+            text: "Placement effect"
+            checkable: true
+            checked: menuBar.mapView.placeEffect
+            onTriggered: menuBar.mapView.placeEffect = !menuBar.mapView.placeEffect
+        }
+        MenuSeparator {}
+
+        Action {
+            text: "Show grid"
+            shortcut: "Shift+G"
+            checkable: true
+            checked: menuBar.mapView.showGrid
+            onTriggered: menuBar.mapView.showGrid = !menuBar.mapView.showGrid
+        }
+
+        Action {
+            text: "Show creatures  (F)"
+            checkable: true
+            checked: menuBar.mapView.showCreatures
+            onTriggered: menuBar.mapView.showCreatures = !menuBar.mapView.showCreatures
+        }
+        Action {
+            text: "Show spawns  (S)"
+            checkable: true
+            checked: menuBar.mapView.showSpawns
+            onTriggered: menuBar.mapView.showSpawns = !menuBar.mapView.showSpawns
+        }
+        Action {
+            text: "Show houses"
+            shortcut: "Ctrl+H"
+            checkable: true
+            checked: menuBar.mapView.showHouses
+            onTriggered: menuBar.mapView.showHouses = !menuBar.mapView.showHouses
+        }
+        Action {
+            text: "Show special zones  (E)"
+            checkable: true
+            checked: menuBar.mapView.showZones
+            onTriggered: menuBar.mapView.showZones = !menuBar.mapView.showZones
+        }
+        Action {
+            text: "Always show zones"
+            checkable: true
+            checked: menuBar.mapView.showZonesAlways
+            onTriggered: menuBar.mapView.showZonesAlways = !menuBar.mapView.showZonesAlways
+        }
+        MenuSeparator {}
+
+        TibiaMenu {
+            title: "Icon Size"
+            Action {
+                text: "Small"
+                checkable: true
+                checked: menuBar.settings.iconSize === 50
+                onTriggered: menuBar.settings.iconSize = 50
+            }
+            Action {
+                text: "Medium"
+                checkable: true
+                checked: menuBar.settings.iconSize === 66
+                onTriggered: menuBar.settings.iconSize = 66
+            }
+            Action {
+                text: "Large"
+                checkable: true
+                checked: menuBar.settings.iconSize === 88
+                onTriggered: menuBar.settings.iconSize = 88
+            }
+        }
+        MenuSeparator {}
+        Action {
+            text: "UI Theme..."
+            onTriggered: menuBar.themeDialog.open()
+        }
+        MenuSeparator {}
+
+        TibiaMenu {
+            id: fpsMenu
+            title: "Limit FPS"
+            Instantiator {
+                model: [0, 30, 60, 120, 144, 240]
+                delegate: TibiaMenuItem {
+                    required property int modelData
+                    text: modelData === 0 ? "Unlimited" : (modelData + " FPS")
+                    checkable: true
+                    checked: menuBar.mapGl.maxFps === modelData
+                    onTriggered: {
+                        menuBar.mapGl.maxFps = modelData;
+                        menuBar.settings.glMaxFps = modelData;
+                    }
+                }
+                onObjectAdded: (index, object) => fpsMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => fpsMenu.removeItem(object)
+            }
+        }
+
+        TibiaMenu {
+            id: undoMenu
+            title: "Undo max"
+            Instantiator {
+                model: [100, 500, 1000, 5000]
+                delegate: TibiaMenuItem {
+                    required property int modelData
+                    text: modelData + " steps"
+                    onTriggered: Backend.otbmReader.setUndoLimit(modelData)
+                }
+                onObjectAdded: (index, object) => undoMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => undoMenu.removeItem(object)
+            }
+        }
+    }
+}

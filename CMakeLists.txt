@@ -9,16 +9,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 COMPONENTS Core Gui Qml Quick OpenGL REQUIRED)
+qt_policy(SET QTP0001 NEW)
 
-# -----------------------------------------------------------------------------
-# OTFormats - statyczna biblioteka parserow formatow OpenTibia
-#
-# Czyste parsowanie plikow klienta/serwera: .spr (sprite'y), .dat (metadane
-# itemow), .otb (mapowanie server<->client id), .otbm (mapa), .otfi (nadpisanie
-# autodetekcji formatu). Zero UI - zalezy tylko od Qt6::Core i Qt6::Gui (QImage).
-# Modele (QAbstractListModel) wystawiane jako API - konsument podlacza je do
-# QML we wlasnym projekcie.
-# -----------------------------------------------------------------------------
 add_library(OTFormats STATIC
     libs/otformats/sprreader.cpp
     libs/otformats/sprreader.h
@@ -41,33 +33,22 @@ add_library(OTFormats STATIC
     libs/otformats/dmedatadir.h
 )
 
-# Katalog data/ ze ZRODEL - aplikacja czyta i zapisuje bezposrednio tam (patrz
-# dmedatadir.h). Bez tego edycje palet/brushy ladowaly w build/data/ i kazdy
-# rebuild nadpisywal je kopia ze zrodel.
 target_compile_definitions(OTFormats PUBLIC
-    DME_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
+    $<$<CONFIG:Debug>:DME_DATA_DIR="${CMAKE_SOURCE_DIR}/data">)
 
 target_link_libraries(OTFormats
     PUBLIC
         Qt6::Core
         Qt6::Gui
-        Qt6::Qml    # dla QAbstractListModel/QVariant
+        Qt6::Qml
 )
 
 target_include_directories(OTFormats PUBLIC libs/otformats)
 
-# -----------------------------------------------------------------------------
-# DewralMapEditor - edytor map (aplikacja QML). Binarka: DME.exe
-#
-# Struktura modulow:
-#   editor/core/  - logika domenowa edytora bez UI (silnik brushy, tilesety
-#                   palet, filtr palety, narzedzia plikowe)
-#   editor/map/   - widok mapy: MapView (kontroler: dane, edycja, wejscie)
-#                   + MapGLView (renderer OpenGL z instancingiem)
-#   editor/qml/   - caly interfejs (QML)
-# -----------------------------------------------------------------------------
 add_executable(DewralMapEditor
     editor/main.cpp
+    editor/core/backend.cpp
+    editor/core/backend.h
     editor/core/brushstore.cpp
     editor/core/brushstore.h
     editor/core/tilesetstore.cpp
@@ -90,11 +71,36 @@ add_executable(DewralMapEditor
     editor/map/mapview_input.cpp
     editor/map/mapview.h
     editor/map/mapview_p.h
+    editor/map/mapservices.cpp
+    editor/map/mapservices.h
     editor/map/mapglview.cpp
     editor/map/mapglview.h
     editor/map/minimapview.cpp
     editor/map/minimapview.h
     editor/resources.qrc
+)
+
+qt_add_qml_module(DewralMapEditor
+    URI Tibia
+    VERSION 1.0
+    SOURCES
+        editor/core/backend.h
+        editor/map/mapview.h
+        editor/map/mapglview.h
+        editor/map/minimapview.h
+        editor/core/palettefilter.h
+        editor/core/documentmanager.h
+        editor/core/filetools.h
+        editor/core/tilesetstore.h
+        editor/core/brushstore.h
+        editor/core/uitheme.h
+        editor/core/creaturestore.h
+        libs/otformats/sprreader.h
+        libs/otformats/datreader.h
+        libs/otformats/otbreader.h
+        libs/otformats/otbmreader.h
+        libs/otformats/otfireader.h
+        libs/otformats/itemsxmlreader.h
 )
 
 target_include_directories(DewralMapEditor PRIVATE editor/core editor/map)
@@ -106,13 +112,6 @@ target_link_libraries(DewralMapEditor
         Qt6::OpenGL
 )
 
-# Binarka nazywa sie DME.exe (skrot), a nie DewralMapEditor.exe.
-# WIN32_EXECUTABLE - bez tego Windows buduje ja jako aplikacje konsolowa i
-# przy kazdym uruchomieniu .exe otwiera sie obok czarne okno terminala.
-# RUNTIME_OUTPUT_DIRECTORY - exe (a wraz z nim DLL-ki z windeployqt i folder
-# data/, bo obie komendy nizej celuja w TARGET_FILE_DIR) laduje zawsze w
-# stalym "dist/" w korzeniu repo, niezalezne od folderu builda Qt Creatora.
-# Kazdy build po prostu AKTUALIZUJE gotowa, przenosna paczke w tym miejscu.
 set_target_properties(DewralMapEditor PROPERTIES
     OUTPUT_NAME "DME"
     WIN32_EXECUTABLE TRUE
@@ -120,22 +119,11 @@ set_target_properties(DewralMapEditor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/dist"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/dist")
 
-# -----------------------------------------------------------------------------
-# Kopiuje folder data/ (brushes.json + tilesets.json per wersja klienta) obok
-# zbudowanego .exe, zeby BrushStore/TilesetStore (applicationDirPath()/data/...)
-# je znalazly. Kopiowane po KAZDYM buildzie - zmiany w source data/ od razu widoczne.
-# -----------------------------------------------------------------------------
 add_custom_command(TARGET DewralMapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:DewralMapEditor>/data"
 )
 
-# -----------------------------------------------------------------------------
-# windeployqt (Windows): kopiuje biblioteki Qt + MODULY QML obok DME.exe. Bez tego
-# uruchomienie exe poza Qt Creatorem zglasza "module QtQuick.Controls is not
-# installed" - same DLL-ki nie wystarcza, potrzebne sa zdeployowane qmldir.
-# --qmldir wskazuje nasze QML, zeby windeployqt wykryl UZYWANE moduly.
-# -----------------------------------------------------------------------------
 if(WIN32)
     get_target_property(_qmake_exe Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_qt_bin_dir "${_qmake_exe}" DIRECTORY)
@@ -149,7 +137,7 @@ if(WIN32)
             COMMENT "windeployqt: biblioteki Qt + moduly QML obok DME.exe"
             VERBATIM)
     else()
-        message(WARNING "windeployqt nie znaleziony - release exe moze nie wstac "
-                        "poza Qt Creatorem (brak modulow QML). Uruchom windeployqt recznie.")
+        message(WARNING "windeployqt was not found - the release executable may not start "
+                        "outside Qt Creator (QML modules are missing). Run windeployqt manually.")
     endif()
 endif()

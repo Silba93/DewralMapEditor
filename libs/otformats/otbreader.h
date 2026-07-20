@@ -6,6 +6,7 @@
 #include <QString>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <cstdint>
 #include <vector>
 
@@ -63,6 +64,7 @@ struct OtbItem {
 class OtbReader : public QAbstractListModel
 {
     Q_OBJECT
+    QML_ANONYMOUS
     Q_PROPERTY(int itemCount READ itemCount NOTIFY itemCountChanged)
     Q_PROPERTY(bool loaded READ isLoaded NOTIFY loadedChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorChanged)
@@ -103,37 +105,21 @@ public:
     quint32 buildNumber() const { return m_buildNumber; }
 
     void setDatReader(DatReader *datReader);
-    // Serwerowe items.xml - zrodlo NAZW i TYPOW itemow, ktorych items.otb zwykle
-    // nie niesie (patrz ItemsXmlReader). Wpiete tutaj, bo dzieki temu caly edytor
-    // (paleta, pasek statusu, okno Properties) dostaje lepsze dane przez te sama
-    // metode nameForServerId, bez zmian w konsumentach. Jak RME, ktore laczy
-    // loadFromOtb + loadFromGameXml w jedna baze itemow.
+
     void setItemsXml(ItemsXmlReader *itemsXml);
 
     Q_INVOKABLE bool loadFile(const QString &path);
     Q_INVOKABLE int clientIdForServerId(int serverId) const;
     Q_INVOKABLE QString nameForServerId(int serverId) const;
-    // Wiersz w modelu dla danego server id (do scrollowania palety). -1 = brak.
+
     Q_INVOKABLE int rowForServerId(int serverId) const;
-    // Kolejnosc ukladania w stosie (OTB "TopOrder", atrybut 0x2B) dla itemow
-    // always-on-bottom (bordery/dywaniki/stoly itp.) - jak RME Item::getTopOrder().
-    // Przy WIELU itemach always-on-bottom na jednym kafelku decyduje kto jest
-    // BLIZEJ podlogi: mniejszy TopOrder = nizej. 0 gdy nieznany/brak atrybutu.
+
     int topOrderForServerId(int serverId) const;
-    // Grupa OTB itemu (OtbItemGroup) lub 0 gdy nieznany. Okno Properties uzywa
-    // tego, by pokazac pole celu teleportu tylko dla itemow grupy Teleport -
-    // dokladnie jak RME, gdzie atrybut TELE_DEST obsluguje klasa Teleport.
+
     Q_INVOKABLE int groupForServerId(int serverId) const;
-    // Czytelna nazwa grupy ("Teleport", "Container", "None"...) - okno Properties
-    // pokazuje ja wprost, zeby dalo sie od reki sprawdzic, czy items.otb w ogole
-    // uznaje dany item za teleport/kontener (serwer decyduje o zachowaniu wlasnie
-    // po tym, nie po wygladzie sprite'a).
+
     Q_INVOKABLE QString groupNameForServerId(int serverId) const;
-    // Czy item jest teleportem (okno Properties pokazuje wtedy cel, a menu PPM
-    // "Go To Destination"). Zrodlem prawdy jest grupa z items.otb, ale wiele OTB
-    // (zwlaszcza TFS) trzyma teleporty jako grupe None i deklaruje typ dopiero w
-    // items.xml - RME czyta oba pliki, my na razie tylko OTB. Do czasu wsparcia
-    // items.xml rozpoznajemy dodatkowo klasyczne id teleportu.
+
     Q_INVOKABLE bool isTeleportItem(int serverId) const;
     Q_INVOKABLE QVariantMap detailsAt(int row) const;
 
@@ -162,4 +148,4 @@ private:
     QString m_errorString;
 };
 
-#endif // OTBREADER_H
+#endif

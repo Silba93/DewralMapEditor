@@ -1,6 +1,4 @@
-// MapView - czesc GL: API danych dla MapGLView (wolane z synchronize(),
-// watek renderu przy zablokowanym GUI): wersje/instancje chunkow, efekty,
-// zaznaczenie, duch przenoszenia, kursor-box pedzla.
+
 #include "mapview.h"
 #include "mapview_p.h"
 
@@ -21,22 +19,22 @@
 
 quint32 MapView::glChunkVersion(int z, quint64 key)
 {
-    // m_floorChunkTiles czytane bez locka - render wola to tylko w sync (GUI zablok.).
+
     auto ztiles = m_floorChunkTiles.find(z);
     if (ztiles == m_floorChunkTiles.end() || !ztiles->contains(key))
-        return kChunkEmpty;                     // brak kafelkow => nic do rysowania
+        return kChunkEmpty;
     std::lock_guard<std::mutex> lk(m_quadMutex);
     auto zit = m_quadCache.find(z);
     if (zit != m_quadCache.end() && zit->contains(key))
-        return m_chunkVer[z].value(key, 1);     // gotowe
-    return kChunkPending;                        // ma kafelki, quady jeszcze nie policzone
+        return m_chunkVer[z].value(key, 1);
+    return kChunkPending;
 }
 
 quint32 MapView::glCollectChunkInstances(int z, quint64 key, bool groundOnly,
                                          std::vector<float> &out)
 {
     out.clear();
-    if (!m_otb || !m_dat || m_atlasImage.isNull()) return kChunkEmpty;
+    if (!m_otb || !m_dat || m_atlasSlots.empty()) return kChunkEmpty;
 
     std::shared_ptr<const std::vector<QuadRef>> quads;
     quint32 ver = kChunkEmpty;
@@ -44,18 +42,15 @@ quint32 MapView::glCollectChunkInstances(int z, quint64 key, bool groundOnly,
         std::lock_guard<std::mutex> lk(m_quadMutex);
         auto zit = m_quadCache.find(z);
         if (zit == m_quadCache.end() || !zit->contains(key)) return kChunkPending;
-        quads = zit->value(key);                // kopia WSKAZNIKA (nie wektora)
+        quads = zit->value(key);
         ver = m_chunkVer[z].value(key, 1);
     }
-    // 6 floatow/instancje: x,y,slotX,slotY,selected,zoneFlags. Klucz selekcji niesie
-    // pietro (selKey), wiec tint dziala na KAZDYM pietrze i ten sam x,y na innym
-    // pietrze nie tintuje sie falszywie.
+
     out.reserve(quads->size() * 6);
     for (const QuadRef &q : *quads) {
-        if (groundOnly && !q.ground) continue;  // LOD: przy oddaleniu tylko podloga
+        if (groundOnly && !q.ground) continue;
         const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
-        // Region (Shift+drag) tintuje CALY stos; pojedynczy grab tylko wierzchni item
-        // (jak RME: box-select relokuje wszystko, chwyt itemu bierze sam item).
+
         const float sel = ((m_selWholeStack || q.topItem)
                            && m_selected.contains(selKey(q.tileX, q.tileY, z))) ? 1.0f : 0.0f;
         out.push_back(static_cast<float>(q.worldX));
@@ -70,15 +65,14 @@ quint32 MapView::glCollectChunkInstances(int z, quint64 key, bool groundOnly,
 
 quint64 MapView::glContentVersion() const
 {
-    // Tylko wersja DANYCH (edycja). Atlas jest przyrostowy ze stabilnymi slotami,
-    // wiec jego zmiana NIE unieważnia buforow - tylko tekstura idzie na nowo.
+
     return static_cast<quint64>(static_cast<uint32_t>(m_dataVersion));
 }
 
 void MapView::glCollectEffectInstances(std::vector<float> &out)
 {
     out.clear();
-    if (m_activeEffects.empty() || !m_dat || m_atlasImage.isNull()) return;
+    if (m_activeEffects.empty() || !m_dat || m_atlasSlots.empty()) return;
 
     const ClientItem *fx = m_dat->effectById(kPlaceEffectId);
     if (!fx || fx->sprite_ids.empty()) { m_activeEffects.clear(); return; }
@@ -86,16 +80,16 @@ void MapView::glCollectEffectInstances(std::vector<float> &out)
     const int frames = std::max<int>(1, fx->frames);
     const int frameStride = std::max(1, static_cast<int>(fx->width) * fx->height * fx->layers
                           * fx->pattern_x * fx->pattern_y * fx->pattern_z);
-    const int frameMs = 100;                  // ~10 klatek/s (jak efekty Tibii)
+    const int frameMs = 100;
     const qint64 now = m_effectClock.elapsed();
 
     std::vector<ActiveEffect> keep;
     keep.reserve(m_activeEffects.size());
     for (const ActiveEffect &e : m_activeEffects) {
         const int frame = static_cast<int>((now - e.startMs) / frameMs);
-        if (frame >= frames) continue;        // animacja skonczona -> usun
+        if (frame >= frames) continue;
         keep.push_back(e);
-        if (e.z != m_floor) continue;         // rysuj tylko na biezacym pietrze
+        if (e.z != m_floor) continue;
         const size_t si = static_cast<size_t>(frame) * frameStride;
         if (si >= fx->sprite_ids.size()) continue;
         const uint32_t sid = fx->sprite_ids[si];
@@ -114,20 +108,19 @@ void MapView::glCollectEffectInstances(std::vector<float> &out)
 void MapView::glCollectSelectionInstances(std::vector<float> &out)
 {
     out.clear();
-    if (m_selected.isEmpty() || m_atlasImage.isNull() || !m_otb || !m_dat) return;
+    if (m_selected.isEmpty() || m_atlasSlots.empty() || !m_otb || !m_dat) return;
 
     std::vector<QuadRef> quads;
     for (quint64 key : m_selected) {
-        // Nakladka rysowana bez offsetu pietra - tylko kafle BIEZACEGO pietra
-        // (zaznaczenie z innych pieter pokazuje tint chunkowy, nie ta nakladka).
+
         if (selZ(key) != m_floor) continue;
         const int x = selX(key), y = selY(key);
         const OtbmTile *tile = currentFloorTileAt(x, y);
         if (!tile) continue;
         quads.clear();
-        appendTopItemQuads(tile, quads);   // tylko wierzchni item (jak RME)
+        appendTopItemQuads(tile, quads);
         for (const QuadRef &q : quads) {
-            // Ground TEZ podswietlamy (RME zaznacza cala plytke, lacznie z podloga).
+
             const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
             out.push_back(static_cast<float>(q.worldX));
             out.push_back(static_cast<float>(q.worldY));
@@ -137,16 +130,11 @@ void MapView::glCollectSelectionInstances(std::vector<float> &out)
     }
 }
 
-// Oblicza bufor swiatla dla JEDNEGO chunka widoku (32x32 RGBA). Zbiera itemy ze
-// swiatlem z chunkow zrodlowych (biezace pietro + widoczne nizsze z projekcja),
-// z sasiadow tez - swiatlo spod granicy chunka rozlewa sie do srodka. Port TIME
-// LightGatherer::gatherForChunk + computeChunkLight na jeden chunk.
 void MapView::computeLightChunk(int cx, int cy, std::vector<uint32_t> &out) const
 {
     const int base_x = cx * kChunkTiles;
     const int base_y = cy * kChunkTiles;
 
-    // Ambient fill (ta sama szarosc na R/G/B - neutralne przyciemnienie nocy).
     const uint32_t ambient = static_cast<uint32_t>(m_lightAmbient)
                              | (static_cast<uint32_t>(m_lightAmbient) << 8)
                              | (static_cast<uint32_t>(m_lightAmbient) << 16)
@@ -155,8 +143,6 @@ void MapView::computeLightChunk(int cx, int cy, std::vector<uint32_t> &out) cons
 
     if (!m_otbm || !m_otb || !m_dat) return;
 
-    // Zbierz swiatla wplywajace na ten chunk (chunk zrodlowy + 8 sasiadow, bo
-    // promien swiatla przekracza granice). Wspolrzedne w PRZESTRZENI WIDOKU.
     struct Light { int x, y; uint8_t color, level; };
     std::vector<Light> lights;
     const int bottomZ = renderBottomFloor();
@@ -164,8 +150,7 @@ void MapView::computeLightChunk(int cx, int cy, std::vector<uint32_t> &out) cons
         const int off = z - m_floor;
         auto zit = m_floorChunkTiles.constFind(z);
         if (zit == m_floorChunkTiles.cend()) continue;
-        // Kafel (tx,ty,z) trafia w widoku na (tx+off, ty+off). Zeby oswietlic chunk
-        // widoku (cx,cy), zrodla to chunki pietra z zawierajace (base - off) i okolica.
+
         const int scx = floorDiv(base_x - off, kChunkTiles);
         const int scy = floorDiv(base_y - off, kChunkTiles);
         for (int dcy = -1; dcy <= 1; ++dcy)
@@ -187,7 +172,6 @@ void MapView::computeLightChunk(int cx, int cy, std::vector<uint32_t> &out) cons
             }
     }
 
-    // MAX-blend swiatel na buforze chunka (paleta 6x6x6, formula TIME).
     for (const Light &l : lights) {
         const float lr = ((l.color / 36) % 6) * 51 / 255.0f;
         const float lg = ((l.color / 6) % 6) * 51 / 255.0f;
@@ -221,9 +205,7 @@ void MapView::computeLightChunk(int cx, int cy, std::vector<uint32_t> &out) cons
 void MapView::invalidateLightAround(int x, int y, int z)
 {
     if (!m_torchOn) return;
-    // Kafel (x,y,z) rzutuje w widoku na (x+off, y+off), off = z - m_floor (>=0 gdy
-    // widoczny). Jego swiatlo dotyka chunka tej pozycji + sasiadow (spill promienia).
-    // Usuwamy z cache dotkniete chunki - przelicza sie leniwie przy nastepnym render.
+
     const int off = z - m_floor;
     if (off < 0) return;
     const int vx = x + off, vy = y + off;
@@ -232,20 +214,18 @@ void MapView::invalidateLightAround(int x, int y, int z)
     for (int dcy = -1; dcy <= 1; ++dcy)
         for (int dcx = -1; dcx <= 1; ++dcx)
             m_lightChunks.remove(chunkKey(cx + dcx, cy + dcy));
-    // MUSI ustawic dirty - inaczej glUpdateLightGrid wychodzi wczesnie (boundsSame)
-    // i nie sklada bufora na nowo, wiec swiatlo aktualizuje sie dopiero przy scrollu.
+
     m_lightDirty = true;
 }
 
 quint32 MapView::glUpdateLightGrid()
 {
-    // Wylaczone / brak danych: pusty zakres (renderer nic nie naklada).
+
     if (!m_torchOn || !m_otbm || !m_otb || !m_dat || m_tileSize <= 0) {
         if (m_lightTW != 0) { m_lightTW = m_lightTH = 0; ++m_lightVersion; }
         return m_lightVersion;
     }
 
-    // Widoczny zakres kafli (+margines na plynne przewijanie).
     const int tx = static_cast<int>(std::floor(m_originX)) - 1;
     const int ty = static_cast<int>(std::floor(m_originY)) - 1;
     const int tw = static_cast<int>(std::ceil(width() / m_tileSize)) + 3;
@@ -254,12 +234,10 @@ quint32 MapView::glUpdateLightGrid()
 
     const bool boundsSame = (tx == m_lightTX && ty == m_lightTY
                              && tw == m_lightTW && th == m_lightTH);
-    if (!m_lightDirty && boundsSame) return m_lightVersion;   // nic sie nie zmienilo
+    if (!m_lightDirty && boundsSame) return m_lightVersion;
     m_lightDirty = false;
     m_lightTX = tx; m_lightTY = ty; m_lightTW = tw; m_lightTH = th;
 
-    // Zloz widoczny bufor z chunkow (cache lub policz raz i wstaw do cache). Edycja
-    // usuwa z cache tylko dotkniete chunki (invalidateLightAround) - reszta gotowa.
     m_lightPixels.assign(static_cast<size_t>(tw) * th, 0);
     const int cx0 = floorDiv(tx, kChunkTiles), cx1 = floorDiv(tx + tw - 1, kChunkTiles);
     const int cy0 = floorDiv(ty, kChunkTiles), cy1 = floorDiv(ty + th - 1, kChunkTiles);
@@ -272,7 +250,7 @@ quint32 MapView::glUpdateLightGrid()
                 computeLightChunk(cx, cy, grid);
                 it = m_lightChunks.insert(ck, std::move(grid));
             }
-            // Skopiuj przeciecie chunka z widokiem do bufora.
+
             const int base_x = cx * kChunkTiles, base_y = cy * kChunkTiles;
             const int ix0 = std::max(tx, base_x), ix1 = std::min(tx + tw, base_x + kChunkTiles);
             const int iy0 = std::max(ty, base_y), iy1 = std::min(ty + th, base_y + kChunkTiles);
@@ -287,57 +265,34 @@ quint32 MapView::glUpdateLightGrid()
     return m_lightVersion;
 }
 
-void MapView::rebuildSpawnMarks()
-{
-    m_spawnCentersFloor.clear();
-    m_spawnMarksDirty = false;
-    // Kafle biezacego pietra ze SWIEZEGO indeksu chunkow - NIE m_currentFloorTiles:
-    // setFloor celowo go nie przelicza (optymalizacja), wiec po zmianie pietra
-    // pokazywalby spawny STAREGO pietra (marker "odjezdzal" wzgledem mapy).
-    auto zit = m_floorChunkTiles.constFind(m_floor);
-    if (zit == m_floorChunkTiles.cend()) return;
-    for (auto cit = zit->cbegin(); cit != zit->cend(); ++cit)
-        for (const OtbmTile *tt : cit.value())
-            if (tt && tt->spawn_radius > 0)
-                m_spawnCentersFloor.push_back({ tt->x, tt->y, tt->spawn_radius });
-}
-
-void MapView::appendSpawnMark(int x, int y, int r)
-{
-    if (m_spawnMarksDirty) return;   // i tak czeka pelny rebuild - nie dubluj wpisow
-    m_spawnCentersFloor.push_back({ x, y, r });
-}
-
 void MapView::glCollectSpawnMarkInstances(std::vector<float> &out, std::vector<float> &outSel)
 {
-    if (m_spawnMarksDirty) rebuildSpawnMarks();
+    m_spawnIndex.ensure(m_floor, m_floorChunkTiles);
     out.clear();
     outSel.clear();
-    if (!m_showSpawns) return;   // Show > Show spawns: markery znikaja (nakladka)
-    // Instancje per klatka z malej listy centrow - dzieki temu podzial na
-    // zaznaczone/nie reaguje na selekcje natychmiast, bez rebuildow.
-    for (const SpawnCenter &c : m_spawnCentersFloor) {
+    if (!m_showSpawns) return;
+
+    for (const MapSpawnIndexService::Center &c : m_spawnIndex.centers()) {
         std::vector<float> &dst = m_selected.contains(selKey(c.x, c.y, m_floor)) ? outSel : out;
         const float cx = c.x * float(kSprite);
         const float cy = c.y * float(kSprite);
-        // Centrum: pelny kafel.
+
         dst.insert(dst.end(), { cx, cy, float(kSprite), float(kSprite) });
-        // Obrys obszaru promienia (kwadrat [x-r..x+r]): 4 paski po 2px.
-        const float r = float(c.r);
+
+        const float r = float(c.radius);
         const float x0 = cx - r * kSprite, y0 = cy - r * kSprite;
         const float side = (2 * r + 1) * kSprite;
-        dst.insert(dst.end(), { x0, y0, side, 2.0f });                 // gora
-        dst.insert(dst.end(), { x0, y0 + side - 2, side, 2.0f });      // dol
-        dst.insert(dst.end(), { x0, y0, 2.0f, side });                 // lewo
-        dst.insert(dst.end(), { x0 + side - 2, y0, 2.0f, side });      // prawo
+        dst.insert(dst.end(), { x0, y0, side, 2.0f });
+        dst.insert(dst.end(), { x0, y0 + side - 2, side, 2.0f });
+        dst.insert(dst.end(), { x0, y0, 2.0f, side });
+        dst.insert(dst.end(), { x0 + side - 2, y0, 2.0f, side });
     }
 }
 
 void MapView::glCollectGridInstances(std::vector<float> &out)
 {
     out.clear();
-    // Przy mocnym oddaleniu (kafle < 8 px) siatka bylaby gestsza niz tresc - pomijamy
-    // (jak RME, ktore przy malym zoomie i tak rysuje sam kolor podlogi).
+
     if (!m_showGrid || m_tileSize < 8) return;
 
     const double ts = std::max(1, m_tileSize);
@@ -347,27 +302,24 @@ void MapView::glCollectGridInstances(std::vector<float> &out)
     const int th = static_cast<int>(std::ceil(height() / ts)) + 3;
     if (tw <= 0 || th <= 0) return;
 
-    // Grubosc linii = 1 px EKRANU przeliczony na world px (32 world px = ts px ekranu).
     const float thick = 32.0f / static_cast<float>(m_tileSize);
     const float x0 = tx0 * 32.0f, y0 = ty0 * 32.0f;
     const float wpx = tw * 32.0f, hpx = th * 32.0f;
 
     out.reserve(static_cast<size_t>(tw + th + 2) * 4);
     for (int i = 0; i <= tw; ++i)
-        out.insert(out.end(), { x0 + i * 32.0f, y0, thick, hpx });   // pionowe
+        out.insert(out.end(), { x0 + i * 32.0f, y0, thick, hpx });
     for (int j = 0; j <= th; ++j)
-        out.insert(out.end(), { x0, y0 + j * 32.0f, wpx, thick });   // poziome
+        out.insert(out.end(), { x0, y0 + j * 32.0f, wpx, thick });
 }
 
 void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vector<float> &outZone)
 {
     outHouse.clear();
     outZone.clear();
-    // showZonesAlways (RME "Always show zones"): kwadraty na PUSTYCH kaflach da
-    // sie wylaczyc osobno - strefy na podlodze (tint quadow) zostaja bez zmian.
+
     if (!m_otbm || !m_showZonesAlways || (!m_showZones && !m_showHouses)) return;
 
-    // Widoczny zakres kafli biezacego pietra (jak grid), po chunkach indeksu.
     const double ts = std::max(1, m_tileSize);
     const int tx0 = static_cast<int>(std::floor(m_originX)) - 1;
     const int ty0 = static_cast<int>(std::floor(m_originY)) - 1;
@@ -384,7 +336,7 @@ void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vect
             auto cit = zit->constFind(chunkKey(cx, cy));
             if (cit == zit->cend()) continue;
             for (const OtbmTile *t : cit.value()) {
-                if (!t || !t->items.empty()) continue;   // z itemami tintuje quad spodu
+                if (!t || !t->items.empty()) continue;
                 if (t->x < tx0 || t->x > tx1 || t->y < ty0 || t->y > ty1) continue;
                 if (m_showHouses && t->is_house) {
                     outHouse.insert(outHouse.end(),
@@ -400,19 +352,13 @@ void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vect
 void MapView::glCollectBrushCursorInstances(std::vector<float> &out)
 {
     out.clear();
-    // Te same warunki co dawny kursor-box: nie pokazuj przy zaznaczaniu/przenoszeniu
-    // ani w trybie wklejania (tam pod kursorem wisi podglad schowka).
+
     if (m_movingSel || m_selecting || m_selectionMode || m_pasting || m_hoverX < 0) return;
     if (m_brushServerId <= 0 && m_activeZone == 0 && !m_eraseMode
         && !m_spawnBrush && m_creatureBrush.isEmpty() && m_houseBrush <= 0) return;
-    // Doodad ma wlasny podglad (ghost stempla) - kursor-kwadrat bylby zbedny.
+
     if (!m_activeDoodadBrush.isEmpty()) return;
 
-    // Format instancji: x, y, szerokosc, wysokosc (px swiata) - patrz shader kursora.
-
-    // Shift+drag (RME dragging_draw): podgladem jest CALY prostokat od kafla wcisniecia
-    // do kursora - geometrycznie to JEDEN prostokat, wiec JEDNA instancja. Per-kafel
-    // przy 400x300 dawalo 120k instancji budowanych co ruch myszy = lag przeciagania.
     if (m_dragDraw) {
         const int x0 = std::min(m_dragStartX, m_hoverX);
         const int x1 = std::max(m_dragStartX, m_hoverX);
@@ -425,8 +371,6 @@ void MapView::glCollectBrushCursorInstances(std::vector<float> &out)
         return;
     }
 
-    // Dokladnie te kafle, ktore zostana pomalowane (brushCovers = ten sam test co
-    // malowanie), wiec podglad nigdy nie klamie - kolo jest kolem, kwadrat kwadratem.
     const int r = m_brushSize;
     for (int dy = -r; dy <= r; ++dy)
         for (int dx = -r; dx <= r; ++dx) {
@@ -441,10 +385,8 @@ void MapView::glCollectBrushCursorInstances(std::vector<float> &out)
 void MapView::glCollectGhostInstances(std::vector<float> &out)
 {
     out.clear();
-    if (m_hoverX < 0 || m_atlasImage.isNull() || !m_otb || !m_dat) return;
+    if (m_hoverX < 0 || m_atlasSlots.empty() || !m_otb || !m_dat) return;
 
-    // 1) TRYB WKLEJANIA (Ctrl+V, jak RME isPasting()): schowek wisi pod kursorem az do
-    //    zatwierdzenia LPM. Rysujemy dokladnie to, co wladuje commitPasteAt.
     if (m_pasting && !m_clipboard.empty()) {
         for (const ClipTile &ct : m_clipboard) {
             const int tx = m_hoverX + ct.dx, ty = m_hoverY + ct.dy;
@@ -475,18 +417,15 @@ void MapView::glCollectGhostInstances(std::vector<float> &out)
         return;
     }
 
-    // 2a) PODGLAD DOODADA: caly stempel (deterministyczny wariant) pol-przezroczysty
-    //     pod kursorem - doodad to konkretny obiekt, wiec sprite ma sens (inaczej niz
-    //     ground/wall). Kursor-kwadrat dla doodada jest wylaczony (patrz cursor).
     if (!m_pasting && !m_movingSel && !m_selectionMode && !m_activeDoodadBrush.isEmpty()
         && m_brushStore) {
-        // Wariant wybrany klawiszem R -> pokaz go; -1 -> reprezentatywny podglad.
+
         const QVector<BrushStore::DoodadTile> tiles =
             m_doodadVariant >= 0
                 ? m_brushStore->doodadVariantTiles(m_activeDoodadBrush, m_doodadVariant)
                 : m_brushStore->doodadPreviewTiles(m_activeDoodadBrush);
         for (const BrushStore::DoodadTile &dt : tiles) {
-            if (dt.dz != 0) continue;   // ghost tylko biezacego pietra (jak move)
+            if (dt.dz != 0) continue;
             const int tx = m_hoverX + dt.dx, ty = m_hoverY + dt.dy;
             for (int sid : dt.items) {
                 const int cid = m_otb->clientIdForServerId(sid);
@@ -514,11 +453,6 @@ void MapView::glCollectGhostInstances(std::vector<float> &out)
         return;
     }
 
-    // 2) PODGLAD SUROWEGO ITEMU (jak RME): pol-przezroczysty sprite pod kursorem -
-    //    widac GDZIE i CO sie postawi. TYLKO dla surowego itemu (RAW/Item palette).
-    //    Dla brushy terenowych (ground/wall/doodad) NIE - tam sprite bylby mylacy
-    //    (sciana nie dopasowana do sasiadow, ground to losowy wariant); wystarcza
-    //    sam kursor-kwadrat. Analogicznie pomijamy strefy/gumke/spawn/dom.
     if (!m_pasting && !m_movingSel && !m_selectionMode && m_brushServerId > 0
         && m_activeZone == 0 && !m_eraseMode && m_creatureBrush.isEmpty()
         && !m_spawnBrush && m_houseBrush <= 0
@@ -555,22 +489,19 @@ void MapView::glCollectGhostInstances(std::vector<float> &out)
         return;
     }
 
-    // 3) Duch przenoszenia zaznaczenia (kursor opuscil zrodlo) - CALE zaznaczenie jako
-    // pol-przezroczyste sprite'y przesuniete o delte, tak jak wladuje sie po puszczeniu
-    // (RME "podniesione" zaznaczenie). Kursor PEDZLA to osobna nakladka QML, nie tu.
     if (!(m_movingSel && m_moveMoved) || m_selected.isEmpty()) return;
 
-    const int odx = (m_hoverX - m_moveSrcX) * kSprite;   // offset przeciagniecia w px
+    const int odx = (m_hoverX - m_moveSrcX) * kSprite;
     const int ody = (m_hoverY - m_moveSrcY) * kSprite;
 
     std::vector<QuadRef> quads;
     for (quint64 key : m_selected) {
-        if (selZ(key) != m_floor) continue;   // duch tylko dla biezacego pietra
+        if (selZ(key) != m_floor) continue;
         const int x = selX(key), y = selY(key);
         const OtbmTile *tile = currentFloorTileAt(x, y);
         if (!tile) continue;
         quads.clear();
-        appendTopItemQuads(tile, quads);   // wierzchni item kafla (jak przy zaznaczaniu)
+        appendTopItemQuads(tile, quads);
         for (const QuadRef &q : quads) {
             const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
             out.push_back(static_cast<float>(q.worldX + odx));
@@ -585,10 +516,10 @@ bool MapView::glFloorChunksReady(int z, int cMinX, int cMinY, int cMaxX, int cMa
 {
     if (!m_otb || !m_dat || m_floorChunkTiles.isEmpty()) return true;
     auto ztiles = m_floorChunkTiles.find(z);
-    if (ztiles == m_floorChunkTiles.end()) return true;   // pietro bez tresci = gotowe
+    if (ztiles == m_floorChunkTiles.end()) return true;
 
     std::vector<std::pair<int, quint64>> missing;
-    {   // jeden lock na przeglad cache (bez kopiowania quadow)
+    {
         std::lock_guard<std::mutex> lk(m_quadMutex);
         auto qz = m_quadCache.find(z);
         for (int cy = cMinY; cy <= cMaxY; ++cy)
@@ -608,11 +539,10 @@ void MapView::glCollectFloorInstances(int z, int cMinX, int cMinY, int cMaxX, in
 {
     out.clear();
     complete = true;
-    if (!m_otb || !m_dat || m_atlasImage.isNull()) return;
+    if (!m_otb || !m_dat || m_atlasSlots.empty()) return;
     auto ztiles = m_floorChunkTiles.find(z);
-    if (ztiles == m_floorChunkTiles.end()) return;   // pietro puste
+    if (ztiles == m_floorChunkTiles.end()) return;
 
-    // Tylko pietro z, surowe pozycje (offset pietra doklada shader przy rysowaniu).
     for (int cy = cMinY; cy <= cMaxY; ++cy)
         for (int cx = cMinX; cx <= cMaxX; ++cx) {
             const quint64 key = chunkKey(cx, cy);
@@ -620,7 +550,7 @@ void MapView::glCollectFloorInstances(int z, int cMinX, int cMinY, int cMaxX, in
             const auto quads = takeChunkQuads(z, key);
             if (!quads) { requestChunkQuads(z, key); complete = false; continue; }
             for (const QuadRef &q : *quads) {
-                if (groundOnly && !q.ground) continue;   // LOD: przy oddaleniu tylko podloga
+                if (groundOnly && !q.ground) continue;
                 const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
                 out.push_back(static_cast<float>(q.worldX));
                 out.push_back(static_cast<float>(q.worldY));
@@ -629,4 +559,3 @@ void MapView::glCollectFloorInstances(int z, int cMinX, int cMinY, int cMaxX, in
             }
         }
 }
-

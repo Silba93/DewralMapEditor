@@ -41,8 +41,7 @@ bool CreatureStore::loadFile(const QString &path)
     if (!f.open(QIODevice::ReadOnly)) return false;
 
     QXmlStreamReader xml(&f);
-    // Kontekst sekcji <monsters>/<npcs> (format RME dopuszcza tez plaskie wpisy
-    // <creature type="npc"> i gole <monster>/<npc> - patrz naglowek).
+
     bool inNpcsSection = false;
 
     while (!xml.atEnd()) {

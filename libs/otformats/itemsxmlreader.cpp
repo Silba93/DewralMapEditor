@@ -30,7 +30,7 @@ bool ItemsXmlReader::loadForDir(const QString &dirName)
                              .filePath(QStringLiteral("%1/items.xml").arg(dirName));
     if (!QFile::exists(path)) {
         clear();
-        return false;   // brak pliku to nie blad - dzialamy na samym OTB
+        return false;
     }
     return loadFile(path);
 }
@@ -46,8 +46,7 @@ bool ItemsXmlReader::loadFile(const QString &path)
     }
 
     QXmlStreamReader xml(&f);
-    // Id itemow, ktorych <item> wlasnie parsujemy - jeden wpis moze obejmowac
-    // ZAKRES (fromid/toid), a zagniezdzone <attribute> dotycza calego zakresu.
+
     QVector<int> currentIds;
 
     while (!xml.atEnd()) {
@@ -66,8 +65,7 @@ bool ItemsXmlReader::loadFile(const QString &path)
                            && a.hasAttribute(QLatin1String("toid"))) {
                     const int from = a.value(QLatin1String("fromid")).toInt();
                     const int to = a.value(QLatin1String("toid")).toInt();
-                    // Zakresy w items.xml bywaja szerokie - limit chroni przed
-                    // uszkodzonym plikiem (np. toid=65535 przy fromid=1).
+
                     if (from > 0 && to >= from && (to - from) <= 65535) {
                         for (int id = from; id <= to; ++id) currentIds.append(id);
                     }
@@ -79,9 +77,7 @@ bool ItemsXmlReader::loadFile(const QString &path)
                 }
             } else if (tag == QLatin1String("attribute") && !currentIds.isEmpty()) {
                 const auto a = xml.attributes();
-                // Interesuje nas wylacznie "type" - to on decyduje, czy item jest
-                // teleportem/depotem/drzwiami. Reszta atrybutow (weight, armor...)
-                // to dane gameplayowe, dla edytora bez znaczenia.
+
                 if (a.value(QLatin1String("key")).toString().compare(
                         QLatin1String("type"), Qt::CaseInsensitive) == 0) {
                     const QString type = a.value(QLatin1String("value")).toString().toLower();

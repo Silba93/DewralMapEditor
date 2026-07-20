@@ -44,10 +44,6 @@ private:
         Escape = 0xFD
     };
 
-    // depth: biezaca glebokosc zagniezdzenia. Poprawne pliki OTBM/OTB maja
-    // drzewa plytkie (mapa ~5 poziomow + kontenery w kontenerach), ale format
-    // pozwala zagniezdzac bez ograniczen - spreparowany plik z tysiacami
-    // otwartych 0xFE moglby przepelnic stos przez te wzajemna rekurencje.
     static constexpr int kMaxDepth = 512;
     bool parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth);
     bool parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth);
@@ -58,4 +54,4 @@ private:
     QString m_errorString;
 };
 
-#endif // NODEFILEREADER_H
+#endif

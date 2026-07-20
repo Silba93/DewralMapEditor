@@ -3,15 +3,6 @@
 
 #include <cstdint>
 
-// -----------------------------------------------------------------------------
-// CanonicalFlags
-//
-// Przeniesione 1:1 z repo tibia-imgui-map-editor (Flags/CanonicalFlags.h).
-// Kanoniczne wartosci flag (bazowane na formacie 8.60+), do ktorych kazdy
-// wersjo-specyficzny DatReader (V710/V740/V755/V780/...) mapuje swoje
-// surowe bajty flag przez transformFlag().
-// -----------------------------------------------------------------------------
-
 namespace CanonicalFlags {
     constexpr uint8_t GROUND = 0;
     constexpr uint8_t GROUND_BORDER = 1;
@@ -64,4 +55,4 @@ namespace CanonicalFlags {
     constexpr uint8_t LAST = 255;
 }
 
-#endif // CANONICALFLAGS_H
+#endif

@@ -14,8 +14,6 @@
 #include <algorithm>
 #include <random>
 
-// Tablica RME GroundBrush::border_types[256] (bitmaska 8 sasiadow -> do 4 kierunkow
-// spakowanych po 8 bitow). Wygenerowana 1:1 z brush_tables.cpp::GroundBrush::init().
 static const quint32 kBorderTypes[256] = {
 0u,5u,1u,1u,6u,1541u,1u,1u,
 4u,4u,9u,9u,1540u,1540u,9u,9u,
@@ -51,7 +49,6 @@ static const quint32 kBorderTypes[256] = {
 262659u,262659u,67174915u,67174915u,262659u,262659u,67174915u,67174915u,
 };
 
-// BorderType (indeksy w tablicy 13 kafli bordera) - jak enum RME BorderType.
 enum {
     BT_NONE = 0, BT_N = 1, BT_E = 2, BT_S = 3, BT_W = 4,
     BT_CNW = 5, BT_CNE = 6, BT_CSW = 7, BT_CSE = 8,
@@ -97,8 +94,7 @@ bool BrushStore::loadForDir(const QString &dirName)
 {
     clear();
     m_rawRoot = QJsonObject();
-    // m_path ustawiane ZAWSZE (takze gdy plik nie istnieje) - edytor brushy moze
-    // tworzyc brushes.json profilu od zera (pierwszy zapis go zalozy).
+
     m_path = QDir(dmeDataDir()).filePath(QStringLiteral("%1/brushes.json").arg(dirName));
     if (!QFile::exists(m_path)) { emit brushesChanged(); return false; }
 
@@ -115,7 +111,7 @@ bool BrushStore::loadForDir(const QString &dirName)
 
 void BrushStore::parseRoot(const QJsonObject &root)
 {
-    // --- borders ---
+
     const QJsonObject borders = root.value(QStringLiteral("borders")).toObject();
     for (auto it = borders.begin(); it != borders.end(); ++it) {
         const QJsonArray arr = it.value().toArray();
@@ -127,7 +123,6 @@ void BrushStore::parseRoot(const QJsonObject &root)
         m_borders.insert(it.key(), tiles);
     }
 
-    // --- grounds ---
     const QJsonObject grounds = root.value(QStringLiteral("grounds")).toObject();
     for (auto it = grounds.begin(); it != grounds.end(); ++it) {
         const QJsonObject g = it.value().toObject();
@@ -144,7 +139,7 @@ void BrushStore::parseRoot(const QJsonObject &root)
             const int id = pair.at(0).toInt();
             const int chance = pair.at(1).toInt();
             def.totalChance += chance;
-            def.items.append({id, def.totalChance});   // skumulowana szansa
+            def.items.append({id, def.totalChance});
             if (id > 0) m_groundByServerId.insert(id, it.key());
         }
 
@@ -171,7 +166,6 @@ void BrushStore::parseRoot(const QJsonObject &root)
         m_grounds.insert(it.key(), def);
     }
 
-    // --- walls (RME WallBrush) ---
     const QJsonObject walls = root.value(QStringLiteral("walls")).toObject();
     for (auto it = walls.begin(); it != walls.end(); ++it) {
         const QJsonObject w = it.value().toObject();
@@ -189,7 +183,7 @@ void BrushStore::parseRoot(const QJsonObject &root)
                 const int id = pair.at(0).toInt();
                 const int chance = pair.at(1).toInt();
                 if (id <= 0) continue;
-                node.total += chance;               // skumulowana szansa (jak RME WallNode)
+                node.total += chance;
                 node.items.append({ id, node.total });
                 m_wallByServerId.insert(id, it.key());
             }
@@ -197,7 +191,6 @@ void BrushStore::parseRoot(const QJsonObject &root)
         m_walls.insert(it.key(), def);
     }
 
-    // --- doodads (RME DoodadBrush) ---
     const QJsonObject doodads = root.value(QStringLiteral("doodads")).toObject();
     for (auto it = doodads.begin(); it != doodads.end(); ++it) {
         const QJsonObject d = it.value().toObject();
@@ -230,7 +223,7 @@ void BrushStore::parseRoot(const QJsonObject &root)
                     DoodadTile dt;
                     dt.dx = to.value(QStringLiteral("dx")).toInt();
                     dt.dy = to.value(QStringLiteral("dy")).toInt();
-                    dt.dz = to.value(QStringLiteral("dz")).toInt();   // offset pietra
+                    dt.dz = to.value(QStringLiteral("dz")).toInt();
                     for (const QJsonValue &iv : to.value(QStringLiteral("items")).toArray()) {
                         const int id = iv.toInt();
                         if (id > 0) dt.items.append(id);
@@ -249,8 +242,6 @@ void BrushStore::parseRoot(const QJsonObject &root)
     }
 }
 
-// ===== Edytor brushy ==========================================================
-
 bool BrushStore::saveJson() const
 {
     if (m_path.isEmpty()) return false;
@@ -264,7 +255,7 @@ bool BrushStore::saveJson() const
 void BrushStore::applyRawAndSave()
 {
     clear();
-    parseRoot(m_rawRoot);   // jedna sciezka parsowania - runtime zawsze = JSON
+    parseRoot(m_rawRoot);
     saveJson();
     emit brushesChanged();
 }
@@ -283,8 +274,6 @@ QStringList BrushStore::wallBrushNames() const
     return l;
 }
 
-// Nazwa klucza zestawu borderow dla (brush, cel). Rozne cele = rozne zestawy,
-// wiec kazdy blok ma wlasne 13 kafli.
 static QString borderKeyFor(const QString &name, const QString &to)
 {
     const QString suffix = to.isEmpty() ? QStringLiteral("empty")
@@ -299,7 +288,6 @@ QVariantMap BrushStore::groundBrushEdit(const QString &name) const
     QVariantList itemsOut;
     QVariantList bordersOut;
 
-    // Z SUROWEGO JSON-a (oryginalne szanse, nie skumulowane z runtime).
     const QJsonObject g = m_rawRoot.value(QStringLiteral("grounds"))
                               .toObject().value(name).toObject();
     if (!g.isEmpty()) {
@@ -312,10 +300,9 @@ QVariantMap BrushStore::groundBrushEdit(const QString &name) const
             it.insert(QStringLiteral("chance"), pair.at(1).toInt());
             itemsOut.append(it);
         }
-        // KAZDY blok borderu -> osobny wpis {to, tiles13}. Dedup po celu (ostatni
-        // wygrywa) - inner/outer z konwersji RME splaszczamy do jednej listy celow.
+
         const QJsonObject bordersMap = m_rawRoot.value(QStringLiteral("borders")).toObject();
-        // Klucz dedup = to+align (osobny "outer do wody" i "inner do wody").
+
         QSet<QString> seen;
         for (const QJsonValue &bv : g.value(QStringLiteral("borders")).toArray()) {
             const QJsonObject bo = bv.toObject();
@@ -365,7 +352,6 @@ bool BrushStore::saveGroundBrush(const QString &name, int zorder,
     }
     if (itemsArr.isEmpty()) return false;
 
-    // Wyczysc STARE zestawy borderow tego brusha (bez ruszania cudzych).
     const QString prefix = QStringLiteral("gb_%1__").arg(name);
     for (const QString &k : borders.keys())
         if (k.startsWith(prefix)) borders.remove(k);
@@ -383,13 +369,13 @@ bool BrushStore::saveGroundBrush(const QString &name, int zorder,
             arr.append(id);
             if (i > 0 && id > 0) any = true;
         }
-        if (!any) continue;   // pusty zestaw = pomijamy caly cel
+        if (!any) continue;
 
         const QString bkey = borderKeyFor(name, to);
         borders.insert(bkey, arr);
         QJsonObject b;
         b.insert(QStringLiteral("align"), QStringLiteral("outer"));
-        b.insert(QStringLiteral("to"), to);   // ""=pustka, "*"=dowolny, else nazwa
+        b.insert(QStringLiteral("to"), to);
         b.insert(QStringLiteral("border"), bkey);
         blocks.append(b);
     }
@@ -399,7 +385,7 @@ bool BrushStore::saveGroundBrush(const QString &name, int zorder,
     g.insert(QStringLiteral("lookid"), lookid);
     g.insert(QStringLiteral("items"), itemsArr);
     g.insert(QStringLiteral("borders"), blocks);
-    // Pola zaawansowane (konwersja RME) przechodza nietkniete.
+
     if (old.contains(QStringLiteral("friends")))
         g.insert(QStringLiteral("friends"), old.value(QStringLiteral("friends")));
     if (old.contains(QStringLiteral("optional")))
@@ -419,8 +405,7 @@ void BrushStore::deleteGroundBrush(const QString &name)
     QJsonObject grounds = m_rawRoot.value(QStringLiteral("grounds")).toObject();
     if (!grounds.contains(name)) return;
     QJsonObject borders = m_rawRoot.value(QStringLiteral("borders")).toObject();
-    // Zestaw borderow kasujemy tylko, gdy to nasz wlasny (gb_<nazwa>) - zestawy
-    // wspoldzielone przez inne brushe (konwersja RME) zostaja.
+
     const QString own = QStringLiteral("gb_") + name;
     borders.remove(own);
     grounds.remove(name);
@@ -456,7 +441,7 @@ bool BrushStore::saveWallBrush(const QString &name, const QVariantList &align17)
     for (int i = 0; i < 17 && i < align17.size(); ++i) {
         const int id = align17.at(i).toInt();
         if (id <= 0) continue;
-        if (lookid == 0 || i == 0) lookid = id;   // preferuj slot 0 (pole)
+        if (lookid == 0 || i == 0) lookid = id;
         items.insert(QString::number(i), QJsonArray{ QJsonArray{ id, 100 } });
     }
     if (items.isEmpty()) return false;
@@ -492,11 +477,11 @@ QVector<BrushStore::DoodadTile> BrushStore::doodadPreviewTiles(const QString &na
 {
     const DoodadDef *def = doodadDef(name);
     if (!def) return {};
-    // Pierwszy composite z pierwszego wariantu, ktory go ma - stabilna ikona.
+
     for (const DoodadDef::Alt &alt : def->alts)
         if (!alt.composites.isEmpty())
             return alt.composites.front().tiles;
-    // Doodad z samych singli - pierwszy single jako pojedynczy kafel (do ghost/podgladu).
+
     for (const DoodadDef::Alt &alt : def->alts)
         if (!alt.singles.isEmpty())
             return { DoodadTile{ 0, 0, 0, { alt.singles.front().first } } };
@@ -519,9 +504,8 @@ QVector<BrushStore::DoodadTile> BrushStore::doodadVariantTiles(const QString &na
     if (!def) return {};
     const int total = doodadVariantCount(name);
     if (total <= 0) return {};
-    index = ((index % total) + total) % total;   // zawijanie
+    index = ((index % total) + total) % total;
 
-    // Plaska numeracja: najpierw singles, potem composites - w kolejnosci alts.
     int i = 0;
     for (const DoodadDef::Alt &alt : def->alts) {
         for (const QPair<int, int> &s : alt.singles) {
@@ -558,15 +542,12 @@ QVector<BrushStore::DoodadTile> BrushStore::pickDoodad(const QString &name) cons
 
     static thread_local std::mt19937 rng(std::random_device{}());
 
-    // 1. Wariant (RME: variation % alternatives.size(); u nas losowo - kazde postawienie
-    //    daje inny wariant, co daje naturalna roznorodnosc przy scatterze).
     const DoodadDef::Alt &alt =
         def->alts[std::uniform_int_distribution<int>(0, def->alts.size() - 1)(rng)];
 
     const int total = alt.singleTotal + alt.compositeTotal;
     if (total <= 0) return {};
 
-    // 2. Single czy composite - proporcjonalnie do sumy szans (jak RME).
     int r = std::uniform_int_distribution<int>(1, total)(rng);
     if (r <= alt.singleTotal) {
         for (const auto &s : alt.singles) {
@@ -605,7 +586,7 @@ int BrushStore::pickWallFromNode(const WallDef::Node &node) const
     static thread_local std::mt19937 rng(std::random_device{}());
     const int r = std::uniform_int_distribution<int>(1, node.total)(rng);
     for (const auto &pr : node.items)
-        if (r < pr.second) return pr.first;   // skumulowana szansa (jak pickGroundItem)
+        if (r < pr.second) return pr.first;
     return node.items.front().first;
 }
 
@@ -613,7 +594,7 @@ int BrushStore::wallPoleItem(const QString &name) const
 {
     const WallDef *def = wallDef(name);
     if (!def) return 0;
-    // wyrownanie 0 = WALL_POLE; gdy brak, bierz cokolwiek pierwszego dostepnego.
+
     if (!def->align[0].items.isEmpty()) return pickWallFromNode(def->align[0]);
     for (const auto &node : def->align)
         if (!node.items.isEmpty()) return node.items.front().first;
@@ -625,11 +606,8 @@ int BrushStore::computeWallItem(const QString &name, bool n, bool w, bool e, boo
     const WallDef *def = wallDef(name);
     if (!def) return 0;
 
-    // maska sasiadow: N=1 W=2 E=4 S=8 (WALLTILE_* z RME)
     const int tiledata = (n ? 1 : 0) | (w ? 2 : 0) | (e ? 4 : 0) | (s ? 8 : 0);
 
-    // full_border_types = tozsamosc (wartosci enuma = indeks); half_border_types
-    // wg wzorca {POLE,VERTICAL,HORIZONTAL,NW_DIAGONAL}[tiledata & 3] (brush_tables.cpp).
     static const int kFull[16] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 };
     static const int kHalf[16] = { 0,9,6,3, 0,9,6,3, 0,9,6,3, 0,9,6,3 };
 
@@ -651,7 +629,7 @@ int BrushStore::pickGroundItem(const QString &name) const
     static thread_local std::mt19937 rng(std::random_device{}());
     const int r = std::uniform_int_distribution<int>(1, def.totalChance)(rng);
     for (const auto &p : def.items)
-        if (r < p.second) return p.first;   // p.second = skumulowana szansa (jak RME)
+        if (r < p.second) return p.first;
     return def.items.front().first;
 }
 
@@ -720,8 +698,6 @@ QVector<int> BrushStore::computeBorderItems(const QString &center, const QString
     struct Cluster { quint32 alignment; int z; const std::array<int, 13> *border; };
     QVector<Cluster> borderList;
 
-    // Zawsze pozwalamy na border opcjonalny (gravel gor) - RME steruje tym flaga
-    // per-kafel; w Etapie 1 upraszczamy do "wlaczony".
     const bool tileHasOptional = true;
 
     for (int i = 0; i < 8; ++i) {
@@ -804,7 +780,6 @@ QVector<int> BrushStore::computeBorderItems(const QString &center, const QString
         nb[i].visited = true;
     }
 
-    // Sortuj rosnaco po z, przetwarzaj od konca (najwyzszy z pierwszy) - jak RME.
     std::sort(borderList.begin(), borderList.end(),
               [](const Cluster &a, const Cluster &b) { return a.z < b.z; });
 

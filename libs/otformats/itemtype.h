@@ -16,7 +16,7 @@ enum class ItemGroup : uint8_t {
   Weapon,
   Ammunition,
   Armor,
-  Changes, // Deprecated
+  Changes,
   Teleport,
   MagicField,
   Writeable,
@@ -157,30 +157,26 @@ enum class ItemTypeEnum : uint8_t {
  */
 class ItemType {
 public:
-  // Identifiers
-  uint16_t server_id = 0; // From OTB - used in OTBM maps
-  uint16_t client_id = 0; // From DAT - used for rendering
 
-  // OTB properties
+  uint16_t server_id = 0;
+  uint16_t client_id = 0;
+
   ItemGroup group = ItemGroup::None;
   ItemFlag flags = ItemFlag::None;
 
-  // Basic properties
   std::string name;
   std::string article;
   std::string description;
 
-  // Movement properties
-  uint16_t speed = 0; // Ground speed
+  uint16_t speed = 0;
   bool is_blocking = false;
   bool is_moveable = true;
   bool is_pickupable = false;
   bool is_stackable = false;
   bool is_fluid_container =
-      false;              // From DAT - items that hold fluids (buckets, vials)
-  bool is_ground = false; // From DAT - ThingAttrGround attribute
+      false;
+  bool is_ground = false;
 
-  // Rendering properties (from DAT)
   uint8_t width = 1;
   uint8_t height = 1;
   uint8_t layers = 1;
@@ -189,78 +185,59 @@ public:
   uint8_t pattern_z = 1;
   uint8_t frames = 1;
   uint8_t ground_speed = 0;
-  int8_t top_order = 0; // Render order for "always on top" items
+  int8_t top_order = 0;
 
-  // Light properties
   uint8_t light_level = 0;
   uint8_t light_color = 0;
 
-  // Minimap color (from DAT) - 8-bit index into 256-color palette
   uint16_t minimap_color = 0;
 
-  // Draw offset (from DAT) - sprite visual offset from tile position
   int16_t draw_offset_x = 0;
   int16_t draw_offset_y = 0;
 
-  // Translucency (from DAT)
   bool is_translucent = false;
 
-  // Elevation (from DAT) - items on this raise subsequent items visually
   uint16_t elevation = 0;
 
-  // Stacking order (from OTB FLAG_ALWAYSONTOP actually means bottom)
   bool always_on_bottom = false;
 
-  // Hook/hangable properties (from OTB flags)
   bool is_hangable = false;
   bool hook_east = false;
   bool hook_south = false;
 
-  // Floor visibility flags (from DAT - critical for floor rendering)
-  bool is_on_bottom = false; // Wall-like items that block floor view
-  bool is_on_top = false;    // Doors, windows (drawn last, priority 3)
+  bool is_on_bottom = false;
+  bool is_on_top = false;
   bool is_dont_hide =
-      false; // Items that never block floor view (transparent roofs, etc)
+      false;
   bool blocks_projectile =
-      false; // Used in non-free view mode for floor blocking
+      false;
 
-  // Border/wall detection (used for rendering order)
   bool is_border = false;
   bool is_wall = false;
-  bool is_locked = false; // Door key lock status (for highlight_locked_doors)
+  bool is_locked = false;
 
-  // Sprite IDs for rendering
   std::vector<uint32_t> sprite_ids;
 
-  // Market/Store properties
   uint16_t wareId = 0;
 
-  // Writeable properties (RME-compatible from items.json)
-  uint16_t maxTextLen = 0; // max_text_len in JSON
+  uint16_t maxTextLen = 0;
   bool can_read_text = false;
   bool can_write_text = false;
   bool allow_dist_read = false;
 
-  // Rotation - target item ID when rotated (0 = not rotatable)
   uint16_t rotateTo = 0;
 
-  // === FROM items.json (RME-compatible) ===
+  std::string editor_suffix;
 
-  // Editor display
-  std::string editor_suffix; // editorSuffix in JSON
-
-  // Combat stats
-  float weight = 0.0f; // Divided by 100 from JSON
+  float weight = 0.0f;
   int16_t armor = 0;
   int16_t defense = 0;
   int16_t attack = 0;
 
-  // Equipment
   SlotPosition slot_position = SlotPosition::None;
   WeaponType weapon_type = WeaponType::None;
   ItemTypeEnum item_type = ItemTypeEnum::None;
 
-  // Floor change
   bool floor_change = false;
   bool floor_change_down = false;
   bool floor_change_north = false;
@@ -272,40 +249,25 @@ public:
   bool floor_change_east_ex = false;
   bool floor_change_west_ex = false;
 
-  // Container
-  uint16_t volume = 0; // containerSize in JSON
+  uint16_t volume = 0;
 
-  // Charges
   uint32_t charges = 0;
   bool extra_chargeable = false;
 
-  // Decay
   bool decays = false;
 
-  // Track if XML was merged
   bool xml_loaded = false;
 
-  // PERFORMANCE: Cached first sprite region (pre-fetched during loading)
-  // Eliminates hash lookup in getSpriteRegion() - 30k+ lookups/frame → 0
-
-  // Additional RME-compatible fields
   uint8_t shootRange = 0;
   uint16_t decayTo = 0;
   uint32_t stopDuration = 0;
   std::string ammoType;
 
-  // Disguise - display this item using another item's appearance (from
-  // items.srv DisguiseTarget)
   uint16_t disguise_target = 0;
 
-  // Helper methods
-  // Type checks - combines OTB group (from items.otb) AND item_type (from
-  // items.json) This ensures compatibility regardless of which data source
-  // defines the type
   bool isReadable() const {
     return can_read_text || hasFlag(ItemFlag::Readable);
   }
-  // isWriteable() is defined below near line 304
 
   bool isGround() const { return group == ItemGroup::Ground; }
   bool isContainer() const {
@@ -349,17 +311,14 @@ public:
 
   bool hasFlag(ItemFlag flag) const { return Domain::hasFlag(flags, flag); }
 
-  // Check if this item has elevation (raises items on top of it)
   bool hasElevation() const {
     return Domain::hasFlag(flags, ItemFlag::HasElevation) && elevation > 0;
   }
 
-  // Get the first sprite ID for rendering
   uint32_t getFirstSpriteId() const {
     return sprite_ids.empty() ? 0 : sprite_ids[0];
   }
 
-  // Calculate total sprite count
   size_t getSpriteCount() const {
     return static_cast<size_t>(width) * height * layers * pattern_x *
            pattern_y * pattern_z * frames;
@@ -371,10 +330,9 @@ public:
    * but no actual item data (no client_id, no sprites).
    */
   bool isValidForRendering() const {
-    // Item must have a client_id (DA T mapping) to be renderable
-    // Items with only server_id and no client_id are gaps/placeholders
+
     return client_id > 0 && !sprite_ids.empty();
   }
 };
 
-} // namespace Domain
+}

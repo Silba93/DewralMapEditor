@@ -28,63 +28,36 @@ QString makeItemCacheKey(const QVariantList &spriteIds, int itemWidth, int itemH
     return key;
 }
 
-} // namespace
+}
 
-// -----------------------------------------------------------------------------
-// SpriteData::decode
-//
-// Odpowiednik SpriteData::decode() z oryginalnego API. Dekoduje surowe dane
-// RLE pod danym offsetem w pliku do QImage RGBA8888.
-//
-// use_transparency w oryginale przelacza kodowanie koloru-klucza (magenta).
-// W formacie .spr przezroczystosc jest jednak kodowana strukturalnie przez
-// RLE (transparent_pixel_count), a 3-bajtowy "colorkey" naglowka sprite'a
-// to legacy pole z bardzo starych klientow - tutaj go odczytujemy (zeby
-// poprawnie przesunac wskaznik strumienia), ale o przezroczystosci decyduje
-// wylacznie struktura RLE, zgodnie z faktycznym formatem plikow 7.72.
-//
-// useAlpha (flaga "transparency" z .otfi, jak RME): gdy true, kazdy kolorowy
-// piksel ma 4 bajty (RGBA - realny kanal alpha z pliku) zamiast domyslnych
-// 3 (RGB, alpha zawsze 255 dla kolorowych pikseli).
-// -----------------------------------------------------------------------------
-bool SpriteData::decode(const QByteArray &fileData, uint32_t offset, int spriteSize, bool useAlpha)
+bool SpriteData::decode(const uchar *encodedData, qsizetype encodedSize,
+                        int spriteSize, bool useAlpha)
 {
     image = QImage(spriteSize, spriteSize, QImage::Format_RGBA8888);
     image.fill(Qt::transparent);
 
-    if (offset == 0) {
+    if (!encodedData || encodedSize == 0) {
         is_empty = true;
-        return true; // pusty sprite to poprawny, oczekiwany stan
+        return true;
     }
 
-    const qint64 fileSize = fileData.size();
-    if (static_cast<qint64>(offset) >= fileSize) {
-        is_empty = true;
-        return false;
-    }
+    const qint64 dataSize = encodedSize;
+    const uchar *raw = encodedData;
+    qint64 pos = 0;
 
-    const uchar *raw = reinterpret_cast<const uchar *>(fileData.constData());
-    qint64 pos = static_cast<qint64>(offset);
-
-    // 3 bajty colorkey (RGB) - legacy pole, pomijamy wartosc
-    if (pos + 3 > fileSize) { is_empty = true; return false; }
+    if (pos + 3 > dataSize) { is_empty = true; return false; }
     pos += 3;
 
-    // 2 bajty: compressed_size (uint16 LE)
-    if (pos + 2 > fileSize) { is_empty = true; return false; }
+    if (pos + 2 > dataSize) { is_empty = true; return false; }
     uint16_t compressedSize = static_cast<uint16_t>(raw[pos]) | (static_cast<uint16_t>(raw[pos + 1]) << 8);
     pos += 2;
 
     const qint64 dataStart = pos;
-    const qint64 dataEnd = qMin(dataStart + static_cast<qint64>(compressedSize), fileSize);
+    const qint64 dataEnd = qMin(dataStart + static_cast<qint64>(compressedSize), dataSize);
 
     const int totalPixels = spriteSize * spriteSize;
     int pixelIndex = 0;
 
-    // Zapis BEZPOSREDNIO do bufora obrazu. Format_RGBA8888 = 4 bajty/piksel w
-    // kolejnosci R,G,B,A, wiersze ciagle co bytesPerLine. setPixelColor robil
-    // per piksel konstrukcje QColor + konwersje + bounds-check - przy dekodowaniu
-    // tysiecy sprite'ow podczas budowy atlasu to byla najgoretsza petla wczytywania.
     uchar *dst = image.bits();
     const qsizetype stride = image.bytesPerLine();
 
@@ -94,20 +67,19 @@ bool SpriteData::decode(const QByteArray &fileData, uint32_t offset, int spriteS
         uint16_t coloredCount = static_cast<uint16_t>(raw[pos]) | (static_cast<uint16_t>(raw[pos + 1]) << 8);
         pos += 2;
 
-        // Piksele przezroczyste - alpha juz 0 z fill(), przesuwamy tylko indeks
         pixelIndex = qMin(pixelIndex + static_cast<int>(transparentCount), totalPixels);
 
-        const int bpp = useAlpha ? 4 : 3;   // RGBA (realny alpha) vs RGB (alpha=255)
+        const int bpp = useAlpha ? 4 : 3;
         for (int i = 0; i < coloredCount && pixelIndex < totalPixels; ++i) {
             if (pos + bpp > dataEnd) break;
 
             const int x = pixelIndex % spriteSize;
             const int y = pixelIndex / spriteSize;
             uchar *px = dst + static_cast<qsizetype>(y) * stride + static_cast<qsizetype>(x) * 4;
-            px[0] = raw[pos];                       // R
-            px[1] = raw[pos + 1];                   // G
-            px[2] = raw[pos + 2];                   // B
-            px[3] = useAlpha ? raw[pos + 3] : 255;  // A
+            px[0] = raw[pos];
+            px[1] = raw[pos + 1];
+            px[2] = raw[pos + 2];
+            px[3] = useAlpha ? raw[pos + 3] : 255;
             pos += bpp;
 
             ++pixelIndex;
@@ -117,10 +89,6 @@ bool SpriteData::decode(const QByteArray &fileData, uint32_t offset, int spriteS
     is_empty = false;
     return true;
 }
-
-// -----------------------------------------------------------------------------
-// SprReader
-// -----------------------------------------------------------------------------
 
 SprReader::SprReader(QObject *parent)
     : QAbstractListModel(parent)
@@ -132,12 +100,21 @@ SprReader::~SprReader() = default;
 void SprReader::reset()
 {
     beginResetModel();
-    m_fileData.clear();
+    if (m_mappedData) {
+        m_file.unmap(m_mappedData);
+        m_mappedData = nullptr;
+    }
+    if (m_file.isOpen()) m_file.close();
+    m_file.setFileName(QString());
+    m_bulkAccessDepth = 0;
+    m_fileSize = 0;
     m_offsets.clear();
     m_signature = 0;
     m_spriteCount = 0;
     m_extended = false;
     m_cache.clear();
+    m_cacheLru.clear();
+    m_cacheBytes = 0;
     m_dataUrlCache.clear();
     m_itemDataUrlCache.clear();
     m_loaded = false;
@@ -156,47 +133,53 @@ void SprReader::setError(const QString &message)
 bool SprReader::loadFile(const QString &path, quint32 expectedSignature, bool extended, bool useAlpha)
 {
     reset();
+    if (!m_errorString.isEmpty()) {
+        m_errorString.clear();
+        emit errorChanged();
+    }
     m_extended = extended;
     m_useAlpha = useAlpha;
 
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        setError(QStringLiteral("Nie mozna otworzyc pliku: %1").arg(path));
+    m_file.setFileName(path);
+    if (!m_file.open(QIODevice::ReadOnly)) {
+        setError(QStringLiteral("Cannot open file: %1").arg(path));
         return false;
     }
+    m_fileSize = m_file.size();
 
-    m_fileData = file.readAll();
-    file.close();
-
-    // Minimalny naglowek: 4B signature + (2B lub 4B) sprite_count
     const int headerCountSize = m_extended ? 4 : 2;
     const qint64 minHeaderSize = 4 + headerCountSize;
 
-    if (m_fileData.size() < minHeaderSize) {
-        setError(QStringLiteral("Plik jest za maly, by byc poprawnym .spr"));
-        m_fileData.clear();
+    if (m_fileSize < minHeaderSize) {
+        setError(QStringLiteral("The file is too small to be a valid .spr file"));
+        m_file.close();
+        m_fileSize = 0;
         return false;
     }
+    const QByteArray header = m_file.read(minHeaderSize);
+    if (header.size() != minHeaderSize) {
+        setError(QStringLiteral("Cannot read the .spr header"));
+        m_file.close();
+        m_fileSize = 0;
+        return false;
+    }
+    const uchar *raw = reinterpret_cast<const uchar *>(header.constData());
 
-    const uchar *raw = reinterpret_cast<const uchar *>(m_fileData.constData());
-
-    // 4 bajty signature (uint32 LE)
     m_signature = static_cast<uint32_t>(raw[0])
                 | (static_cast<uint32_t>(raw[1]) << 8)
                 | (static_cast<uint32_t>(raw[2]) << 16)
                 | (static_cast<uint32_t>(raw[3]) << 24);
 
     if (expectedSignature != 0 && m_signature != expectedSignature) {
-        setError(QStringLiteral("Nieprawidlowa sygnatura pliku .spr (oczekiwano 0x%1, otrzymano 0x%2)")
+        setError(QStringLiteral("Invalid .spr signature (expected 0x%1, got 0x%2)")
                       .arg(expectedSignature, 0, 16)
                       .arg(m_signature, 0, 16));
-        m_fileData.clear();
+        reset();
         return false;
     }
 
     qint64 pos = 4;
 
-    // sprite_count: 2 bajty dla 7.72 (extended=false), 4 bajty dla extended
     if (m_extended) {
         m_spriteCount = static_cast<uint32_t>(raw[pos])
                        | (static_cast<uint32_t>(raw[pos + 1]) << 8)
@@ -209,25 +192,35 @@ bool SprReader::loadFile(const QString &path, quint32 expectedSignature, bool ex
         pos += 2;
     }
 
-    // Tablica offsetow: sprite_count wpisow po 4 bajty (uint32 LE)
     const qint64 offsetsStart = pos;
     const qint64 offsetsBytes = static_cast<qint64>(m_spriteCount) * 4;
 
-    if (offsetsStart + offsetsBytes > m_fileData.size()) {
-        setError(QStringLiteral("Plik jest uszkodzony - tablica offsetow wykracza poza plik"));
-        m_fileData.clear();
-        m_spriteCount = 0;
+    if (offsetsStart + offsetsBytes > m_fileSize) {
+        setError(QStringLiteral("The file is corrupt: the offset table exceeds the file size"));
+        reset();
         return false;
     }
+    if (!m_file.seek(offsetsStart)) {
+        setError(QStringLiteral("Cannot seek to the .spr offset table"));
+        reset();
+        return false;
+    }
+    const QByteArray offsetData = m_file.read(offsetsBytes);
+    if (offsetData.size() != offsetsBytes) {
+        setError(QStringLiteral("Cannot read the complete .spr offset table"));
+        reset();
+        return false;
+    }
+    const uchar *offsetRaw = reinterpret_cast<const uchar *>(offsetData.constData());
 
     m_offsets.reserve(static_cast<int>(m_spriteCount));
 
     for (uint32_t i = 0; i < m_spriteCount; ++i) {
-        qint64 p = offsetsStart + static_cast<qint64>(i) * 4;
-        uint32_t offset = static_cast<uint32_t>(raw[p])
-                         | (static_cast<uint32_t>(raw[p + 1]) << 8)
-                         | (static_cast<uint32_t>(raw[p + 2]) << 16)
-                         | (static_cast<uint32_t>(raw[p + 3]) << 24);
+        const qint64 p = static_cast<qint64>(i) * 4;
+        uint32_t offset = static_cast<uint32_t>(offsetRaw[p])
+                         | (static_cast<uint32_t>(offsetRaw[p + 1]) << 8)
+                         | (static_cast<uint32_t>(offsetRaw[p + 2]) << 16)
+                         | (static_cast<uint32_t>(offsetRaw[p + 3]) << 24);
         m_offsets.append(offset);
     }
 
@@ -235,37 +228,132 @@ bool SprReader::loadFile(const QString &path, quint32 expectedSignature, bool ex
     emit spriteCountChanged();
     emit loadedChanged();
 
-    beginInsertRows(QModelIndex(), 0, static_cast<int>(m_spriteCount) - 1);
-    endInsertRows();
+    if (m_spriteCount > 0) {
+        beginInsertRows(QModelIndex(), 0, static_cast<int>(m_spriteCount) - 1);
+        endInsertRows();
+    }
 
     return true;
 }
 
 std::shared_ptr<SpriteData> SprReader::loadSprite(uint32_t spriteId)
 {
-    // sprite ID sa 1-indeksowane; ID 0 lub poza zakresem -> pusty sprite
+    return loadSpriteImpl(spriteId, true);
+}
+
+std::shared_ptr<SpriteData> SprReader::loadSpriteUncached(uint32_t spriteId)
+{
+    return loadSpriteImpl(spriteId, false);
+}
+
+void SprReader::beginBulkAccess()
+{
+    ++m_bulkAccessDepth;
+    if (m_bulkAccessDepth == 1 && m_file.isOpen() && m_fileSize > 0)
+        m_mappedData = m_file.map(0, m_fileSize);
+}
+
+void SprReader::endBulkAccess()
+{
+    if (m_bulkAccessDepth <= 0) return;
+    --m_bulkAccessDepth;
+    if (m_bulkAccessDepth == 0 && m_mappedData) {
+        m_file.unmap(m_mappedData);
+        m_mappedData = nullptr;
+    }
+}
+
+std::shared_ptr<SpriteData> SprReader::loadSpriteImpl(uint32_t spriteId, bool cacheResult)
+{
     if (spriteId < 1 || spriteId > m_spriteCount) {
         auto empty = std::make_shared<SpriteData>();
         empty->id = spriteId;
-        empty->decode(m_fileData, 0, kDefaultSpriteSize, m_useAlpha);
+        empty->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
         return empty;
     }
 
     auto it = m_cache.find(spriteId);
     if (it != m_cache.end()) {
-        return it.value();
+        m_cacheLru.splice(m_cacheLru.begin(), m_cacheLru, it->lru);
+        return it->sprite;
     }
 
+    auto sprite = decodeSprite(spriteId);
+    if (cacheResult) cacheSprite(spriteId, sprite);
+    return sprite;
+}
+
+std::shared_ptr<SpriteData> SprReader::decodeSprite(uint32_t spriteId)
+{
     auto sprite = std::make_shared<SpriteData>();
     sprite->id = spriteId;
 
-    uint32_t offset = m_offsets.at(static_cast<int>(spriteId) - 1);
-    sprite->decode(m_fileData, offset, kDefaultSpriteSize, m_useAlpha);
+    const uint32_t offset = m_offsets.at(static_cast<int>(spriteId) - 1);
+    if (offset == 0) {
+        sprite->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
+        return sprite;
+    }
 
-    // Limit cache'u (patrz naglowek): pelne czyszczenie po przekroczeniu.
-    if (m_cache.size() >= kMaxSpriteCache) m_cache.clear();
-    m_cache.insert(spriteId, sprite);
+    if (static_cast<qint64>(offset) + 5 > m_fileSize) {
+        sprite->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
+        return sprite;
+    }
+
+    QByteArray encoded;
+    const uchar *raw = nullptr;
+    if (m_mappedData) {
+        raw = m_mappedData + offset;
+    } else {
+        if (!m_file.seek(static_cast<qint64>(offset))) {
+            sprite->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
+            return sprite;
+        }
+        encoded = m_file.read(5);
+        if (encoded.size() != 5) {
+            sprite->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
+            return sprite;
+        }
+        raw = reinterpret_cast<const uchar *>(encoded.constData());
+    }
+    const uint16_t compressedSize = static_cast<uint16_t>(raw[3])
+                                  | (static_cast<uint16_t>(raw[4]) << 8);
+    const qint64 encodedSize = 5 + static_cast<qint64>(compressedSize);
+    if (static_cast<qint64>(offset) + encodedSize > m_fileSize) {
+        sprite->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
+        return sprite;
+    }
+    if (!m_mappedData) {
+        const QByteArray pixels = m_file.read(compressedSize);
+        if (pixels.size() != compressedSize) {
+            sprite->decode(nullptr, 0, kDefaultSpriteSize, m_useAlpha);
+            return sprite;
+        }
+        encoded.append(pixels);
+        raw = reinterpret_cast<const uchar *>(encoded.constData());
+    }
+    sprite->decode(raw, encodedSize, kDefaultSpriteSize, m_useAlpha);
     return sprite;
+}
+
+void SprReader::cacheSprite(uint32_t spriteId, const std::shared_ptr<SpriteData> &sprite)
+{
+    const qsizetype bytes = sprite && !sprite->image.isNull()
+                                ? sprite->image.sizeInBytes() + static_cast<qsizetype>(sizeof(SpriteData))
+                                : static_cast<qsizetype>(sizeof(SpriteData));
+
+    m_cacheLru.push_front(spriteId);
+    m_cache.insert(spriteId, SpriteCacheEntry{sprite, m_cacheLru.begin(), bytes});
+    m_cacheBytes += bytes;
+
+    while (m_cacheBytes > kMaxSpriteCacheBytes && m_cacheLru.size() > 1) {
+        const uint32_t evictedId = m_cacheLru.back();
+        auto evicted = m_cache.find(evictedId);
+        if (evicted != m_cache.end()) {
+            m_cacheBytes -= evicted->bytes;
+            m_cache.erase(evicted);
+        }
+        m_cacheLru.pop_back();
+    }
 }
 
 QImage SprReader::spriteImage(int spriteId)
@@ -348,7 +436,6 @@ QString SprReader::itemImageSource(const QVariantList &spriteIds,
     return dataUrl;
 }
 
-
 int SprReader::rowCount(const QModelIndex &parent) const
 {
     if (parent.isValid()) {
@@ -363,11 +450,8 @@ QVariant SprReader::data(const QModelIndex &index, int role) const
         return QVariant();
     }
 
-    const int spriteId = index.row() + 1; // model row 0 -> sprite ID 1
+    const int spriteId = index.row() + 1;
 
-    // data() jest const w QAbstractListModel, ale lazy-load wymaga mutacji
-    // cache'u - rzutujemy const-away tak jak robi to wzorzec "mutable cache"
-    // (analogicznie do mutable cache_ w oryginalnym SprReader z repo).
     auto *self = const_cast<SprReader *>(this);
 
     switch (role) {

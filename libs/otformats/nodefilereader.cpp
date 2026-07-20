@@ -20,7 +20,7 @@ uint32_t readLe32(const QByteArray &data, qsizetype offset)
          | (static_cast<uint32_t>(raw[offset + 3]) << 24);
 }
 
-} // namespace
+}
 
 bool BinaryNode::getU8(uint8_t &value)
 {
@@ -110,13 +110,13 @@ bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &ac
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        setError(QStringLiteral("Nie mozna otworzyc pliku: %1").arg(path));
+        setError(QStringLiteral("Cannot open file: %1").arg(path));
         return false;
     }
 
     const QByteArray data = file.readAll();
     if (data.size() < 5) {
-        setError(QStringLiteral("Plik jest za maly, by byc poprawnym plikiem node"));
+        setError(QStringLiteral("The file is too small to be a valid node file"));
         return false;
     }
 
@@ -131,13 +131,13 @@ bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &ac
     }
 
     if (!accepted) {
-        setError(QStringLiteral("Nieprawidlowy identyfikator pliku"));
+        setError(QStringLiteral("Invalid file identifier"));
         return false;
     }
 
     qsizetype pos = 4;
     if (static_cast<uint8_t>(data.at(pos)) != Start) {
-        setError(QStringLiteral("Nieprawidlowa struktura pliku node"));
+        setError(QStringLiteral("Invalid node file structure"));
         return false;
     }
     ++pos;
@@ -153,7 +153,7 @@ bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &ac
 bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth)
 {
     if (depth > kMaxDepth) {
-        setError(QStringLiteral("Zbyt glebokie zagniezdzenie node'ow (uszkodzony plik?)"));
+        setError(QStringLiteral("Node nesting is too deep (corrupt file?)"));
         return false;
     }
 
@@ -163,7 +163,7 @@ bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNod
 
         if (byte == Escape) {
             if (pos >= data.size()) {
-                setError(QStringLiteral("Przerwany escape w pliku node"));
+                setError(QStringLiteral("Truncated escape sequence in node file"));
                 return false;
             }
             node.m_data.append(data.at(pos));
@@ -183,7 +183,7 @@ bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNod
         node.m_data.append(static_cast<char>(byte));
     }
 
-    setError(QStringLiteral("Nieoczekiwany koniec pliku node"));
+    setError(QStringLiteral("Unexpected end of node file"));
     return false;
 }
 
@@ -206,11 +206,11 @@ bool NodeFileReader::parseChildNodes(const QByteArray &data, qsizetype &pos, Bin
             return true;
         }
 
-        setError(QStringLiteral("Nieprawidlowy marker dziecka w pliku node"));
+        setError(QStringLiteral("Invalid child marker in node file"));
         return false;
     }
 
-    setError(QStringLiteral("Nieoczekiwany koniec listy dzieci w pliku node"));
+    setError(QStringLiteral("Unexpected end of child list in node file"));
     return false;
 }
 

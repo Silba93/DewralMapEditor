@@ -2,27 +2,15 @@
 #define MINIMAPVIEW_H
 
 #include <QQuickPaintedItem>
+#include <QtQml/qqmlregistration.h>
 #include "mapview.h"
 
-// -----------------------------------------------------------------------------
-// MinimapView
-//
-// Okno minimapy (jak RME "Minimap" / TIME MinimapWindow): wycinek obrazu
-// 1 px = 1 kafel biezacego pietra (cache w MapView::minimapImage), wysrodkowany
-// na srodku widoku mapy, z ramka pokazujaca widoczny obszar.
-//
-// QQuickPaintedItem zamiast Image+dataURL: obraz minimapy zmienia sie czesto
-// (kazda edycja = piksel), a kodowanie PNG/base64 per zmiana byloby absurdalnie
-// drogie. Tutaj rysujemy QImage bezposrednio (drawImage z podprostokatem).
-//
-// Interakcja: LPM/przeciaganie = centruj widok mapy na wskazanym kaflu;
-// kolko = zoom minimapy (px na kafel, 1..8).
-// -----------------------------------------------------------------------------
 class MinimapView : public QQuickPaintedItem
 {
     Q_OBJECT
+    QML_NAMED_ELEMENT(MinimapView)
     Q_PROPERTY(MapView *source READ source WRITE setSource NOTIFY sourceChanged)
-    // Piksele na kafel (zoom minimapy). 1 = klasyczny widok 1:1.
+
     Q_PROPERTY(int pxPerTile READ pxPerTile WRITE setPxPerTile NOTIFY pxPerTileChanged)
 
 public:
@@ -46,11 +34,11 @@ protected:
     void wheelEvent(QWheelEvent *e) override;
 
 private:
-    void centerMapAt(const QPointF &pos);   // klik minimapy -> centrowanie mapy
+    void centerMapAt(const QPointF &pos);
 
     MapView *m_source = nullptr;
     int m_pxPerTile = 1;
-    quint32 m_paintedVer = 0;   // wersja obrazu przy ostatnim paint (unik zbednych repaintow)
+    quint32 m_paintedVer = 0;
 };
 
-#endif // MINIMAPVIEW_H
+#endif

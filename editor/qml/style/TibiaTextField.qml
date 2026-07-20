@@ -1,33 +1,37 @@
+import Tibia 1.0
 import QtQuick
 
-// Pole tekstowe w stylu classic Tibia UI. Zrodlo: textedit.png, border=1
-// (10-textedits.otui -> TextEdit).
 Item {
     id: root
-    // "text" jako alias juz automatycznie generuje sygnal zmiany (onTextChanged
-    // dziala od razu na instancji) - jawna deklaracja "signal textChanged()"
-    // kolidowalaby z nim (Duplicate signal name).
+
     property alias text: input.text
     property alias placeholderText: placeholder.text
-    signal accepted()
-    // Enter LUB utrata focusu. Uwaga: TibiaButton to goly MouseArea i focusu NIE zabiera,
-    // wiec klikniecie przycisku myszka tego NIE odpali - okno, ktore zapisuje tekst
-    // dopiero tutaj, musi dodatkowo zatwierdzic go samo w handlerze przycisku.
-    signal editingFinished()
+    signal accepted
+
+    signal editingFinished
 
     implicitWidth: 140
     implicitHeight: 22
 
     BorderImage {
         anchors.fill: parent
-        source: (uiTheme.tex + "textedit.png")
+        source: (Backend.uiTheme.tex + "textedit.png")
         smooth: false
-        border { left: 1; right: 1; top: 1; bottom: 1 }
+        border {
+            left: 1
+            right: 1
+            top: 1
+            bottom: 1
+        }
     }
 
     Text {
         id: placeholder
-        anchors { left: parent.left; leftMargin: 6; verticalCenter: parent.verticalCenter }
+        anchors {
+            left: parent.left
+            leftMargin: 6
+            verticalCenter: parent.verticalCenter
+        }
         color: "#777"
         font.pixelSize: 12
         visible: input.text.length === 0

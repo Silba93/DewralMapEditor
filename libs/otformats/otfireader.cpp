@@ -42,8 +42,7 @@ bool OtfiReader::loadFromFolder(const QString &folder)
 
         const bool indented = rawLine.startsWith(QLatin1Char(' ')) || rawLine.startsWith(QLatin1Char('\t'));
         if (!indented) {
-            // Naglowek sekcji (np. "DatSpr"). Wchodzimy tylko do "DatSpr" - inne
-            // ewentualne sekcje (przyszle rozszerzenia) sa ignorowane.
+
             inDatSpr = (trimmed.compare(QLatin1String("DatSpr"), Qt::CaseInsensitive) == 0);
             continue;
         }
@@ -61,7 +60,7 @@ bool OtfiReader::loadFromFolder(const QString &folder)
         else if (key == QLatin1String("frame-groups")) m_frameGroups = boolVal;
         else if (key == QLatin1String("metadata-file")) m_metadataFile = value;
         else if (key == QLatin1String("sprites-file")) m_spritesFile = value;
-        // inne klucze (sprite-size, sprite-data-size, ...) - ignorowane (patrz naglowek).
+
     }
 
     if (m_metadataFile.isEmpty()) m_metadataFile = QStringLiteral("Tibia.dat");

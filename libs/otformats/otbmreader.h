@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -15,26 +16,6 @@
 
 class BinaryNode;
 
-// -----------------------------------------------------------------------------
-// OtbmReader
-//
-// Parser map OTBM (Open Tibia Binary Map). OTBM uzywa dokladnie tego samego
-// formatu drzewa node'ow co items.otb (markery 0xFE/0xFF/0xFD), wiec do
-// odczytu surowej struktury wykorzystujemy istniejacy NodeFileReader, a tutaj
-// tylko interpretujemy poszczegolne wezly mapy.
-//
-// Wzorowane na MapEditor::IO::Otbm::OtbmReader z repo tibia-imgui-map-editor.
-//
-// Struktura pliku:
-//   [u32 naglowek wersji = 0] 0xFE
-//     RootHeader: u32 wersja OTBM, u16 width, u16 height, u32 otbMajor, u32 otbMinor
-//     0xFE MapData: atrybuty (description, spawn file, house file)
-//       0xFE TileArea: u16 baseX, u16 baseY, u8 baseZ
-//         0xFE Tile/HouseTile: u8 dx, u8 dy, [u32 houseId], atrybuty, dzieci-itemy
-//       0xFE Towns / Waypoints ...
-// -----------------------------------------------------------------------------
-
-// Numeracja wezlow 1:1 z OtbmReader.h z repo referencyjnego.
 enum class OtbmNode : uint8_t {
     RootHeader = 0,
     MapData = 2,
@@ -97,29 +78,26 @@ enum OtbmTileFlag : uint32_t {
     TileRefresh = 1u << 5
 };
 
-// Rzadkie atrybuty itemu (teleport/tekst/drzwi/tier/podium). Wydzielone z
-// OtbmMapItem i trzymane ZA WSKAZNIKIEM (null dla ogromnej wiekszosci itemow) -
-// dokladnie jak RME trzyma Item::attributes. Powod: OtbmMapItem jest masowo
-// KOPIOWANY na watku GUI (snapshoty undo per kafel pociagniecia, schowek). Gdy
-// te pola siedzialy inline, kazdy item urosl ~2x (2x QString + QByteArray),
-// przez co snapshoty undo przy malowaniu duzym pedzlem zjadaly FPS. Za
-// wskaznikiem zwykly item ma znowu maly, tani-w-kopii rozmiar, a plac pod
-// atrybuty alokuje sie tylko dla itemow, ktore je faktycznie maja.
-// Uklad bajtow 1:1 z RME (OTAcademy/RME, source/iomap_otbm.cpp:
-// Teleport/Door/Item::readItemAttribute_OTBM) - pliki zostaja zgodne z RME/TFS.
 struct OtbmItemExtra {
-    QString text;              // OTBM_ATTR_TEXT (6) - napis na znaku/ksiazce
-    QString description;       // OTBM_ATTR_DESC (7) - opis (rzadko uzywane)
-    bool has_teleport = false; // czy tele_* sa wazne (0,0,0 tez jest legalnym celem)
-    uint16_t tele_x = 0;       // OTBM_ATTR_TELE_DEST (8): u16 x, u16 y, u8 z
+
+    struct NamedAttribute {
+        QByteArray key;
+        uint8_t type = 0;
+        QByteArray value_raw;
+    };
+
+    QString text;
+    QString description;
+    bool has_teleport = false;
+    uint16_t tele_x = 0;
     uint16_t tele_y = 0;
     uint8_t tele_z = 0;
-    uint8_t door_id = 0;       // OTBM_ATTR_HOUSEDOORID (14): u8 - RME Door::doorId
-    uint8_t tier = 0;          // OTBM_ATTR_TIER (41): u8 - "Fiendish"/forge tier
-    // OTBM_ATTR_PODIUMOUTFIT (40): 15 surowych bajtow (flagi+kierunek+outfit+mount).
-    // Edytor nie ma jeszcze UI do edycji wygladu podium - trzymamy 1:1 i
-    // odtwarzamy bez interpretacji, byle nie gubic danych przy load+save.
+    uint8_t door_id = 0;
+    uint8_t tier = 0;
+
     QByteArray podium_raw;
+    bool has_attribute_map = false;
+    std::vector<NamedAttribute> attribute_map;
 };
 
 struct OtbmMapItem {
@@ -130,55 +108,60 @@ struct OtbmMapItem {
     uint32_t unique_id = 0;
     bool is_ground = false;
 
-    // null = zwykly item bez specjalnych atrybutow (przypadek dominujacy).
     std::unique_ptr<OtbmItemExtra> extra;
 
-    // Zawartosc kontenerow (rekurencyjnie). Puste dla zwyklych itemow.
-    std::vector<OtbmMapItem> children;
+    std::unique_ptr<std::vector<OtbmMapItem>> children;
 
     OtbmMapItem() = default;
     OtbmMapItem(OtbmMapItem &&) = default;
     OtbmMapItem &operator=(OtbmMapItem &&) = default;
-    // Kopia GLEBOKA: unique_ptr nie jest kopiowalny, a OtbmMapItem musi zostac
-    // typem wartosciowym (snap.items = t.items, item = src itd.). Klonujemy extra,
-    // zeby dwie kopie nie dzielily atrybutow (edycja jednej nie ruszala drugiej).
+
     OtbmMapItem(const OtbmMapItem &o)
         : server_id(o.server_id), count(o.count), depot_id(o.depot_id),
           action_id(o.action_id), unique_id(o.unique_id), is_ground(o.is_ground),
           extra(o.extra ? std::make_unique<OtbmItemExtra>(*o.extra) : nullptr),
-          children(o.children) {}
+          children(o.children
+                       ? std::make_unique<std::vector<OtbmMapItem>>(*o.children)
+                       : nullptr) {}
     OtbmMapItem &operator=(const OtbmMapItem &o) {
         if (this != &o) {
             server_id = o.server_id; count = o.count; depot_id = o.depot_id;
             action_id = o.action_id; unique_id = o.unique_id; is_ground = o.is_ground;
             extra = o.extra ? std::make_unique<OtbmItemExtra>(*o.extra) : nullptr;
-            children = o.children;
+            children = o.children
+                           ? std::make_unique<std::vector<OtbmMapItem>>(*o.children)
+                           : nullptr;
         }
         return *this;
     }
 
-    // Leniwie tworzy blok atrybutow do zapisu (odczyt OTBM / przyszla edycja UI).
     OtbmItemExtra &ensureExtra() {
         if (!extra) extra = std::make_unique<OtbmItemExtra>();
         return *extra;
     }
+
+    const std::vector<OtbmMapItem> &childItems() const {
+        static const std::vector<OtbmMapItem> empty;
+        return children ? *children : empty;
+    }
+
+    std::vector<OtbmMapItem> &ensureChildren() {
+        if (!children) children = std::make_unique<std::vector<OtbmMapItem>>();
+        return *children;
+    }
 };
 
 struct OtbmTile {
+    std::vector<OtbmMapItem> items;
+    QString creature_name;
+    uint32_t flags = 0;
+    uint32_t house_id = 0;
+    int spawn_radius = 0;
+    int creature_spawntime = 60;
     uint16_t x = 0;
     uint16_t y = 0;
     uint8_t z = 0;
-    uint32_t flags = 0;
     bool is_house = false;
-    uint32_t house_id = 0;
-    std::vector<OtbmMapItem> items; // ground jako pierwszy
-
-    // Spawny (model RME): centrum spawnu to kafel z radius > 0; potwory/NPC leza
-    // na WLASNYCH kaflach w promieniu. Zapis idzie do spawns.xml (ExtSpawnFile),
-    // NIE do OTBM - te pola nie dotykaja writeMapItem/parseTile.
-    int spawn_radius = 0;           // > 0 = ten kafel jest centrum spawnu
-    QString creature_name;          // niepuste = potwor/NPC stoi na tym kaflu
-    int creature_spawntime = 60;    // sekundy (atrybut spawntime w XML)
     bool creature_is_npc = false;
 };
 
@@ -197,8 +180,6 @@ struct OtbmWaypoint {
     uint8_t z = 0;
 };
 
-// Dom (houses.xml, format RME/TFS). Kafle domu zyja w OTBM (HouseTile: is_house +
-// house_id na OtbmTile); tu tylko metadane. "size" liczone przy zapisie z kafli.
 struct OtbmHouse {
     uint32_t id = 0;
     QString name;
@@ -211,11 +192,10 @@ struct OtbmHouse {
 class OtbmReader : public QObject
 {
     Q_OBJECT
+    QML_ANONYMOUS
     Q_PROPERTY(bool loaded READ isLoaded NOTIFY loadedChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorChanged)
-    // Stan DOKUMENTU (system kart map): kazda otwarta mapa nosi wlasna sciezke i flage
-    // niezapisanych zmian. Wczesniej to byly globalne property w Main.qml - z tabami
-    // musialyby byc recznie przelaczane, a tak podrozuja razem z readerem.
+
     Q_PROPERTY(bool dirty READ isDirty NOTIFY dirtyChanged)
     Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
     Q_PROPERTY(int width READ width NOTIFY loadedChanged)
@@ -241,16 +221,9 @@ public:
     bool isDirty() const { return m_dirty; }
     QString filePath() const { return m_filePath; }
 
-    // Nowa PUSTA mapa (File > New): zeruje stan i ustawia naglowek tak, by zapis
-    // i wykrywanie wersji klienta (suggestedClientVersion z wersji items.otb)
-    // dzialaly od razu. Wersja OTBM wg RME clients.xml: <8.0 -> OTBM1, 8.0x -> OTBM2,
-    // nowsze -> OTBM3 (w pliku 0-based, patrz OtbmVersion). filePath zostaje pusty -
-    // Save robi wtedy Save As.
     Q_INVOKABLE bool newMap(int width, int height, int clientVersion,
                             int otbMajor, int otbMinor);
 
-    // Ustawia wersje naglowka pod AKTUALNEGO klienta (OTBM wg wersji klienta, items
-    // wg zaladowanego items.otb) - QML wola to przed KAZDYM zapisem, jak robi RME.
     Q_INVOKABLE void applyClientVersions(int clientVersion, int otbMajor, int otbMinor);
     QString errorString() const { return m_errorString; }
     int width() const { return m_width; }
@@ -266,182 +239,129 @@ public:
     int townCount() const { return static_cast<int>(m_towns.size()); }
     int waypointCount() const { return static_cast<int>(m_waypoints.size()); }
 
-    // deque: stabilne wskazniki do elementow przy push_back (edycja dodaje kafelki,
-    // nigdy nie usuwa), wiec indeks renderera nie wymaga przebudowy po realokacji.
     const std::deque<OtbmTile> &tiles() const { return m_tiles; }
-    // Wskaznik do kafelka na pozycji (lub nullptr). Stabilny przez caly czas zycia.
+
     const OtbmTile *tileAt(int x, int y, int z) const;
     const std::vector<OtbmTown> &towns() const { return m_towns; }
     const std::vector<OtbmWaypoint> &waypoints() const { return m_waypoints; }
-    // Listy dla QML (do okien "Edit Towns" / waypointow): [{name,id,x,y,z}].
+
     Q_INVOKABLE QVariantList townsList() const;
     Q_INVOKABLE QVariantList waypointsList() const;
 
-    // --- Edycja miast (Map > Edit Towns w QML) ---
-    // Dodaje nowe miasto (id = max(istniejace)+1, nazwa "New Town", temple 0,0,0).
-    // Zwraca nowe id.
     Q_INVOKABLE int addTown();
     Q_INVOKABLE void removeTown(int id);
     Q_INVOKABLE void renameTown(int id, const QString &name);
     Q_INVOKABLE void setTownTemple(int id, int x, int y, int z);
 
     Q_INVOKABLE bool loadFile(const QString &path);
-    // Zapisuje biezacy stan mapy do pliku .otbm (format drzewa node'ow).
+
     Q_INVOKABLE bool saveFile(const QString &path);
     Q_INVOKABLE QVariantMap header() const;
-    // Wersja klienta (772, 860, 1098...) wywnioskowana z naglowka OTBM
-    // (otbItemsMinorVersion = id z tabeli clients.xml RME). 0 = nieznana.
+
     Q_INVOKABLE int suggestedClientVersion() const;
-    // Lista itemow (server id) na danym pietrze - przydatne do podgladu/renderu.
+
     Q_INVOKABLE QVariantList tilesOnFloor(int z) const;
 
-    // Edycja: dodaje item (server_id) na kafelek; tworzy kafelek jesli nie istnieje.
-    // Pierwszy item na nowym kafelku staje sie groundem. Zwraca true gdy dodano.
-    // UWAGA: utworzenie nowego kafelka moze przealokowac m_tiles - wszystkie
-    // wczesniej pobrane wskazniki/referencje do kafelkow staja sie niewazne.
     bool addItem(int x, int y, int z, uint16_t serverId);
-    // Wstawia/zastepuje item na konkretnej pozycji w stosie kafelka (tworzy
-    // kafelek jesli nie istnieje). replace=true nadpisuje item pod indeksem
-    // (uzywane do podmiany ground). isGround ustawia flage ground itemu.
+
     bool placeItem(int x, int y, int z, uint16_t serverId,
                    int index, bool replace, bool isGround);
-    // Jak wyzej, ale wstawia GOTOWY item - zachowuje count (rozmiar sterty), action_id,
-    // unique_id, depot_id i zawartosc kontenera. Move/paste musi isc ta sciezka, inaczej
-    // przenoszony item odradza sie z domyslnym count=1.
+
     bool placeItem(int x, int y, int z, const OtbmMapItem &item,
                    int index, bool replace, bool isGround);
-    // Usuwa wierzchni item z kafelka. Zwraca true gdy cos usunieto.
+
     bool removeTopItem(int x, int y, int z);
-    // Ustawia flagi kafelka (strefy: PZ / No-PvP / No-Logout / PvP - OTBM_ATTR_TILE_FLAGS).
-    // Dziala tylko na ISTNIEJACYCH kafelkach (jak RME - strefy sa cecha kafla, nie tworza go).
-    // Zwraca true gdy cos sie zmienilo.
+
     bool setTileFlags(int x, int y, int z, uint32_t flags);
-    // Flagi kafelka lub 0 gdy kafel nie istnieje.
+
     uint32_t tileFlags(int x, int y, int z) const;
 
-    // Podmienia na kafelku wszystkie itemy fromId -> toId W MIEJSCU (zachowuje pozycje
-    // w stosie, w odroznieniu od remove+add). Zwraca liczbe podmian.
-    // Wchodzi tez w zawartosc kontenerow (OtbmMapItem::children).
     int replaceItemsById(int x, int y, int z, uint16_t fromId, uint16_t toId);
 
-    // --- Domy (jak RME: metadane w houses.xml, kafle jako HouseTile w OTBM) ---
-    // Lista domow: [{id, name, rent, townId, guildhall, entryX/Y/Z, size}].
     Q_INVOKABLE QVariantList housesList() const;
-    Q_INVOKABLE int addHouse(int townId);            // nowy dom, zwraca id
-    Q_INVOKABLE void removeHouse(int id);            // usuwa metadane + CZYSCI kafle domu
+    Q_INVOKABLE int addHouse(int townId);
+    Q_INVOKABLE void removeHouse(int id);
     Q_INVOKABLE void setHouseName(int id, const QString &name);
     Q_INVOKABLE void setHouseRent(int id, int rent);
-    // Miasto domu (jak RME house_choice) - TFS/RME wymagaja poprawnego townid
-    // wskazujacego na ISTNIEJACE miasto (0 nie jest realnym id - addTown numeruje
-    // od 1), inaczej dom moze byc niekupowalny/niewchodzalny w grze.
+
     Q_INVOKABLE void setHouseTownId(int id, int townId);
     Q_INVOKABLE void setHouseEntry(int id, int x, int y, int z);
-    // Kafel domu (RME HouseBrush): draw = house_id + flaga PZ; undraw czysci oba.
+
     bool setHouseTileAt(int x, int y, int z, uint32_t houseId);
     bool clearHouseTileAt(int x, int y, int z);
 
-    // --- Spawny (model RME: centrum+radius na kaflu, potwory na wlasnych kaflach).
-    // Wszystko ze snapshotem undo; radius/creature czyszczone przez wartosci 0/"".
-    // Tworza kafel gdy nie istnieje (spawn moze stac na pustym terenie).
     bool setSpawnAt(int x, int y, int z, int radius);
     bool setCreatureAt(int x, int y, int z, const QString &name, int spawntime, bool isNpc);
-    bool clearSpawnAt(int x, int y, int z);      // usuwa centrum spawnu
-    bool clearCreatureAt(int x, int y, int z);   // usuwa potwora z kafla
+    bool clearSpawnAt(int x, int y, int z);
+    bool clearCreatureAt(int x, int y, int z);
 
-    // Ustawia count (rozmiar sterty) WIERZCHNIEGO itemu kafelka; jedno cofniecie.
-    // Sens ma tylko dla stackowalnych - czy item nim jest, sprawdza wolajacy (zna .dat).
-    // Zapis do OTBM wychodzi tylko dla count > 1 (patrz writeMapItem).
     bool setTopItemCount(int x, int y, int z, uint16_t count);
 
-    // --- Atrybuty WIERZCHNIEGO itemu (okno Properties), kazdy = jedno cofniecie ---
-    // Odpowiedniki pol z OtbmItemExtra. Wartosc 0 / pusty string KASUJE atrybut
-    // (wtedy writeMapItem go nie zapisze) - jak RME, gdzie wyzerowane pole znika.
-    // Czy dany atrybut ma sens dla tego itemu (writable/teleport), ocenia wolajacy.
     bool setTopItemActionId(int x, int y, int z, uint16_t actionId);
     bool setTopItemUniqueId(int x, int y, int z, uint16_t uniqueId);
     bool setTopItemText(int x, int y, int z, const QString &text);
-    // Cel teleportu. Ujemne wspolrzedne (lub z poza 0..15) = skasuj atrybut.
+
     bool setTopItemTeleport(int x, int y, int z, int destX, int destY, int destZ);
 
-    // Ile itemow o danym server-id na kafelku, wliczajac zawartosc kontenerow.
     int countItemsOnTile(int x, int y, int z, int serverId) const;
 
-    // --- Operacje na CALEJ mapie (menu Edit, jak RME) ---
-    // Wszystkie jako jedna grupa undo; wypelniaja lastAffected() dotknietymi kaflami.
-    // Licza/zmieniaja tez itemy w kontenerach (torba w skrzyni w depocie...).
     Q_INVOKABLE int countItemsOnMap(int serverId) const;
     int replaceItemsOnMap(uint16_t fromId, uint16_t toId);
     int removeItemsOnMap(uint16_t serverId);
-    // Pierwsze wystapienie itemu na mapie (do "skocz do") - {x,y,z} lub pusty QVariantMap.
+
     Q_INVOKABLE QVariantMap findFirstItemOnMap(int serverId) const;
 
-    // Usuwa z kafelka WSZYSTKIE itemy o podanych server-id (jednym snapshotem undo).
-    // Uzywane przez auto-bordery ("cleanBorders" - kasuje stare kafle bordera przed
-    // przeliczeniem). Zwraca liczbe usunietych itemow.
-    // deep=true schodzi tez w kontenery (menu Remove Item); domyslnie plytko, bo sciezka
-    // borderow wola to na kazdym kaflu, a bordery nigdy nie leza w torbie.
     int removeItemsById(int x, int y, int z, const std::vector<uint16_t> &ids, bool deep = false);
 
-    // --- Undo (Ctrl+Z) / Redo (Ctrl+Y) ---
-    // Grupowanie kilku zmian w jedno cofniecie (np. pociagniecie pedzlem / move).
     void beginUndoGroup();
     void endUndoGroup();
-    Q_INVOKABLE bool undo();                 // cofa ostatnia akcje
-    Q_INVOKABLE bool redo();                 // ponawia cofnieta akcje
-    // Pozycje kafli dotknietych przez OSTATNIE undo()/redo() - do PUNKTOWEGO,
-    // SYNCHRONICZNEGO odswiezenia renderu (jak przy zwyklej edycji), zamiast polegac
-    // na asynchronicznym przeliczaniu chunkow (ktore budzi render zawodnie -> zmiana
-    // widoczna dopiero po kolejnym kliknieciu).
+    Q_INVOKABLE bool undo();
+    Q_INVOKABLE bool redo();
+
     struct EditPos { int x, y, z; };
     const std::vector<EditPos> &lastAffected() const { return m_lastAffected; }
     int undoCount() const { return static_cast<int>(m_undoStack.size()); }
     int redoCount() const { return static_cast<int>(m_redoStack.size()); }
     Q_INVOKABLE int undoLimit() const { return m_undoLimit; }
-    Q_INVOKABLE void setUndoLimit(int n);    // maksymalna liczba cofniec
+    Q_INVOKABLE void setUndoLimit(int n);
 
 signals:
     void loadedChanged();
     void errorChanged();
-    void mapChanged();   // dane mapy sie zmienily (po edycji)
+    void mapChanged();
     void dirtyChanged();
     void filePathChanged();
 
 private:
     void reset();
     void setError(const QString &message);
+    bool abortLoad(QString message);
     void setDirty(bool d);
 
     bool parseRootHeader(BinaryNode &root);
     bool parseMapData(BinaryNode &mapData);
-    void parseTileArea(BinaryNode &area);
-    void parseTile(BinaryNode &tile, uint16_t baseX, uint16_t baseY, uint8_t baseZ);
-    OtbmMapItem parseItem(BinaryNode &itemNode);
-    void parseTowns(BinaryNode &townsNode);
-    void parseWaypoints(BinaryNode &waypointsNode);
+    bool parseTileArea(BinaryNode &area);
+    bool parseTile(BinaryNode &tile, uint16_t baseX, uint16_t baseY, uint8_t baseZ);
+    bool parseItem(BinaryNode &itemNode, OtbmMapItem &item);
+    bool parseTowns(BinaryNode &townsNode);
+    bool parseWaypoints(BinaryNode &waypointsNode);
 
     int countItems(const OtbmMapItem &item) const;
 
     void rebuildPosIndex();
-    // Wspolny szkielet setterow atrybutow wierzchniego itemu (patrz .cpp).
+
     template <typename Mut>
     bool mutateTopItem(int x, int y, int z, Mut mut);
-    OtbmTile *getOrCreateTileRaw(int x, int y, int z); // bez undo (load spawns.xml)
-    OtbmTile *tileForSpawnEdit(int x, int y, int z);   // kafel pod spawn (tworzy + undo)
+    OtbmTile *getOrCreateTileRaw(int x, int y, int z);
+    OtbmTile *tileForSpawnEdit(int x, int y, int z);
 
-    // spawns.xml (format RME/TFS): <spawn centerx/y/z radius> z potworami na
-    // OFFSETACH wzgledem centrum. Sciezka wzgledem katalogu mapy (ExtSpawnFile).
-    void loadSpawnsXml(const QString &mapPath);
-    bool saveSpawnsXml(const QString &mapPath);
-    // houses.xml (format RME/TFS) - jak spawny, sciezka z ExtHouseFile.
-    void loadHousesXml(const QString &mapPath);
-    bool saveHousesXml(const QString &mapPath);
+    bool loadSpawnsXml(const QString &mapPath);
+    bool buildSpawnsXml(const QString &mapPath, QString &targetPath, QByteArray &data);
+
+    bool loadHousesXml(const QString &mapPath);
+    bool buildHousesXml(const QString &mapPath, QString &targetPath, QByteArray &data);
     OtbmHouse *houseById(int id);
 
-    // Snapshot stanu kafelka (przed zmiana) dla undo.
-    // flags = strefy kafla (PZ/No-PvP/...). BEZ nich undo cofalo tylko itemy, a
-    // malowanie strefy zostawalo na mapie.
-    // flags = strefy; spawn/creature = spawny. Bez ktoregokolwiek undo cofaloby
-    // itemy, a malowanie stref/spawnow zostawalo na mapie (bylo tak ze strefami).
     struct TileSnapshot {
         int x, y, z;
         uint32_t flags = 0;
@@ -449,15 +369,15 @@ private:
         QString creature_name;
         int creature_spawntime = 60;
         bool creature_is_npc = false;
-        bool is_house = false;      // domy - ten sam wzorzec co strefy/spawny
+        bool is_house = false;
         uint32_t house_id = 0;
         std::vector<OtbmMapItem> items;
     };
     struct UndoAction { std::vector<TileSnapshot> tiles; };
-    void recordTile(int x, int y, int z);    // zapamietaj stan kafelka przed edycja
+    void recordTile(int x, int y, int z);
     void pushUndo(UndoAction &&action);
     void restoreSnapshot(const TileSnapshot &snap);
-    // Biezacy stan kafelka jako snapshot (dla budowy akcji przeciwnej przy undo/redo).
+
     TileSnapshot currentSnapshot(int x, int y, int z) const;
 
     static quint64 posKey3d(int x, int y, int z) {
@@ -467,18 +387,18 @@ private:
     }
 
     std::deque<OtbmTile> m_tiles;
-    QHash<quint64, int> m_posIndex; // (x,y,z) -> indeks w m_tiles
+    QHash<quint64, int> m_posIndex;
 
     std::deque<UndoAction> m_undoStack;
-    std::deque<UndoAction> m_redoStack;   // cofniete akcje do ponowienia (Redo)
-    std::vector<EditPos> m_lastAffected;  // kafle dotkniete przez ostatnie undo/redo
+    std::deque<UndoAction> m_redoStack;
+    std::vector<EditPos> m_lastAffected;
     int m_undoLimit = 500;
     bool m_undoGrouping = false;
     UndoAction m_currentGroup;
-    QSet<quint64> m_groupRecorded;  // pozycje juz zapamietane w biezacej grupie
+    QSet<quint64> m_groupRecorded;
     std::vector<OtbmTown> m_towns;
     std::vector<OtbmWaypoint> m_waypoints;
-    std::vector<OtbmHouse> m_houses;   // metadane domow (houses.xml)
+    std::vector<OtbmHouse> m_houses;
 
     uint32_t m_otbmVersion = 0;
     uint16_t m_width = 0;
@@ -488,12 +408,17 @@ private:
     QString m_description;
     QString m_spawnFile;
     QString m_houseFile;
+
+    bool m_spawnsXmlLoaded = false;
+    bool m_housesXmlLoaded = false;
+    bool m_spawnsModified = false;
+    bool m_housesModified = false;
     int m_itemCount = 0;
 
     bool m_loaded = false;
     QString m_errorString;
     bool m_dirty = false;
-    QString m_filePath;   // sciezka dokumentu (load/save); pusta dla nowej mapy
+    QString m_filePath;
 };
 
-#endif // OTBMREADER_H
+#endif

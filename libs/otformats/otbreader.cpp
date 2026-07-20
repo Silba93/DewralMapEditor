@@ -149,7 +149,7 @@ QStringList collectOtbFlags(const OtbItem &item)
     return flags;
 }
 
-} // namespace
+}
 
 OtbReader::OtbReader(QObject *parent)
     : QAbstractListModel(parent)
@@ -196,8 +196,7 @@ void OtbReader::setItemsXml(ItemsXmlReader *itemsXml)
     m_itemsXml = itemsXml;
 
     if (m_itemsXml) {
-        // Wczytanie items.xml zmienia NAZWY juz zaladowanych itemow - paleta musi
-        // sie odswiezyc, inaczej pokazywalaby stare "(bez nazwy)" az do reloadu OTB.
+
         connect(m_itemsXml, &ItemsXmlReader::loadedChanged, this, [this] {
             if (m_items.empty()) return;
             emit dataChanged(index(0), index(static_cast<int>(m_items.size()) - 1),
@@ -242,7 +241,7 @@ bool OtbReader::loadFile(const QString &path)
 
     BinaryNode &root = file.rootNode();
 
-    root.skip(1); // unused 0 byte
+    root.skip(1);
     uint32_t unusedFlags = 0;
     root.getU32(unusedFlags);
 
@@ -395,23 +394,22 @@ QString OtbReader::groupNameForServerId(int serverId) const
 {
     auto it = m_serverIdToRow.find(static_cast<uint16_t>(serverId));
     if (it == m_serverIdToRow.end()) {
-        return QStringLiteral("(brak w items.otb)");
+        return QStringLiteral("(missing from items.otb)");
     }
     return groupName(m_items[static_cast<size_t>(it.value())].group);
 }
 
 bool OtbReader::isTeleportItem(int serverId) const
 {
-    // 1) Grupa z items.otb - najpewniejsze, gdy OTB w ogole klasyfikuje itemy.
+
     if (groupForServerId(serverId) == static_cast<int>(OtbItemGroup::Teleport)) {
         return true;
     }
-    // 2) type="teleport" z items.xml - tak robi RME (loadFromGameXml) i to jest
-    //    zrodlo prawdy dla wiekszosci OTB, ktore trzymaja teleport jako grupe None.
+
     if (m_itemsXml && m_itemsXml->isTeleport(serverId)) {
         return true;
     }
-    // 3) Ostatnia deska ratunku, gdy nie ma ani grupy, ani items.xml: klasyczne id.
+
     static const int kKnownTeleportIds[] = { 1387 };
     for (int id : kKnownTeleportIds) {
         if (serverId == id) return true;
@@ -421,9 +419,7 @@ bool OtbReader::isTeleportItem(int serverId) const
 
 QString OtbReader::nameForServerId(int serverId) const
 {
-    // items.xml ma PIERWSZENSTWO nad OTB - tak samo jak w RME, gdzie
-    // loadFromGameXml nadpisuje nazwe wczytana wczesniej z items.otb.
-    // OTB czesto nie niesie nazw w ogole, wiec bez tego paleta pokazuje same id.
+
     if (m_itemsXml) {
         const QString xmlName = m_itemsXml->nameForServerId(serverId);
         if (!xmlName.isEmpty()) return xmlName;
@@ -450,7 +446,7 @@ QVariantMap OtbReader::detailsAt(int row) const
 
     const OtbItem &item = m_items[static_cast<size_t>(row)];
     const ClientItem *clientItem = m_datReader ? m_datReader->itemByClientId(item.client_id) : nullptr;
-    // Nazwa przez nameForServerId - items.xml ma pierwszenstwo nad OTB (patrz tam).
+
     const QString name = nameForServerId(item.server_id);
     const QString title = name.isEmpty()
                               ? QStringLiteral("Item %1").arg(item.server_id)
@@ -533,8 +529,7 @@ QVariant OtbReader::data(const QModelIndex &index, int role) const
     case ClientIdRole:
         return item.client_id;
     case NameRole:
-        // Przez nameForServerId, nie item.name - dzieki temu paleta pokazuje nazwy
-        // z items.xml (OTB ich zwykle nie ma). Patrz nameForServerId.
+
         return nameForServerId(item.server_id);
     case GroupRole:
         return item.group;

@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QCoreApplication>
+#include <QSaveFile>
 
 TilesetStore::TilesetStore(QObject *parent)
     : QObject(parent)
@@ -58,9 +59,19 @@ bool TilesetStore::loadJsonInto(const QString &path,
     return any;
 }
 
-void TilesetStore::saveJson() const
+void TilesetStore::setErrorString(const QString &message)
 {
-    if (m_path.isEmpty()) return;   // brak wersji (nic nie wczytano) - nie ma gdzie zapisac
+    if (m_errorString == message) return;
+    m_errorString = message;
+    emit errorStringChanged();
+}
+
+bool TilesetStore::saveJson()
+{
+    if (m_path.isEmpty()) {
+        setErrorString(QStringLiteral("No data profile was selected for tilesets."));
+        return false;
+    }
 
     QJsonObject root;
     for (const char *catC : kCategories) {
@@ -77,10 +88,29 @@ void TilesetStore::saveJson() const
         root.insert(cat, catObj);
     }
 
-    QDir().mkpath(QFileInfo(m_path).absolutePath());
-    QFile f(m_path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    const QString dir = QFileInfo(m_path).absolutePath();
+    if (!QDir().mkpath(dir)) {
+        setErrorString(QStringLiteral("Cannot create directory: %1").arg(dir));
+        return false;
+    }
+
+    const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    QSaveFile f(m_path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        setErrorString(QStringLiteral("Cannot open %1: %2").arg(m_path, f.errorString()));
+        return false;
+    }
+    if (f.write(json) != json.size()) {
+        setErrorString(QStringLiteral("Cannot write %1: %2").arg(m_path, f.errorString()));
+        f.cancelWriting();
+        return false;
+    }
+    if (!f.commit()) {
+        setErrorString(QStringLiteral("Cannot commit %1: %2").arg(m_path, f.errorString()));
+        return false;
+    }
+    setErrorString(QString());
+    return true;
 }
 
 bool TilesetStore::loadForVersion(int clientVersion)
@@ -116,36 +146,65 @@ bool TilesetStore::newTileset(const QString &category, const QString &name)
 {
     if (name.isEmpty()) return false;
     if (m_names.value(category).contains(name)) return false;
+    const auto oldNames = m_names;
+    const auto oldItems = m_items;
     m_names[category].append(name);
     m_items[category][name] = {};
-    saveJson();
+    if (!saveJson()) {
+        m_names = oldNames;
+        m_items = oldItems;
+        return false;
+    }
     bump();
     return true;
 }
 
-void TilesetStore::deleteTileset(const QString &category, const QString &name)
+bool TilesetStore::deleteTileset(const QString &category, const QString &name)
 {
-    if (!m_names.value(category).contains(name)) return;
+    if (!m_names.value(category).contains(name)) return false;
+    const auto oldNames = m_names;
+    const auto oldItems = m_items;
     m_names[category].removeAll(name);
     m_items[category].remove(name);
-    saveJson();
+    if (!saveJson()) {
+        m_names = oldNames;
+        m_items = oldItems;
+        return false;
+    }
     bump();
+    return true;
 }
 
-void TilesetStore::addItem(const QString &category, const QString &name, int serverId)
+bool TilesetStore::addItem(const QString &category, const QString &name, int serverId)
 {
-    if (name.isEmpty()) return;
+    if (name.isEmpty()) return false;
+    const auto oldNames = m_names;
+    const auto oldItems = m_items;
     if (!m_names.value(category).contains(name)) m_names[category].append(name);
     QVariantList &list = m_items[category][name];
-    if (!list.contains(serverId)) list.append(serverId);
-    saveJson();
+    if (list.contains(serverId)) return true;
+    list.append(serverId);
+    if (!saveJson()) {
+        m_names = oldNames;
+        m_items = oldItems;
+        return false;
+    }
     bump();
+    return true;
 }
 
-void TilesetStore::removeItem(const QString &category, const QString &name, int serverId)
+bool TilesetStore::removeItem(const QString &category, const QString &name, int serverId)
 {
+    if (!m_items.value(category).value(name).contains(serverId)) return false;
+    const auto oldNames = m_names;
+    const auto oldItems = m_items;
     QVariantList &list = m_items[category][name];
     list.removeAll(QVariant(serverId));
-    saveJson();
+    if (!saveJson()) {
+        m_names = oldNames;
+        m_items = oldItems;
+        return false;
+    }
     bump();
+    return true;
 }

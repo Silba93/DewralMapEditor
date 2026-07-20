@@ -59,31 +59,27 @@ QStringList collectDatFlags(const ClientItem &item)
     return flags;
 }
 
-} // namespace
+}
 
-// transformFlag 1:1 z DatReaderV755:
-// raw 23 -> FLOOR_CHANGE (w kanonicznym ukladzie 23 to TRANSLUCENT,
-// ale w formacie 7.55-7.72 bajt 23 oznacza floor change).
-// Wszystko inne pasuje 1:1 do CanonicalFlags.
 uint8_t DatReader::transformFlag(uint8_t raw) const
 {
-    // Tabele transformacji 1:1 z RME (loadSpriteMetadataFlags):
+
     if (m_clientVersion >= 1010) {
-        // 10.10+: flaga 16 = "No Movement Animation"; wyzsze przesuniete o +1.
+
         if (raw == 16) return NO_MOVE_ANIMATION;
         if (raw > 16)  return raw - 1;
         return raw;
     }
     if (m_clientVersion >= 860) {
-        return raw;               // 8.60-9.86: format kanoniczny (bez zmian)
+        return raw;
     }
     if (m_clientVersion >= 780) {
-        // 7.80-8.54: flaga 8 = "Item Charges"; wyzsze przesuniete o +1.
+
         if (raw == 8) return CHARGEABLE;
         if (raw > 8)  return raw - 1;
         return raw;
     }
-    // 7.55-7.72: flaga 23 = "Floor Change".
+
     return (raw == 23) ? FLOOR_CHANGE : raw;
 }
 
@@ -128,13 +124,13 @@ bool DatReader::loadFile(const QString &path, quint32 expectedSignature)
 
     BinaryReader reader(path);
     if (!reader.isOpen()) {
-        setError(QStringLiteral("Nie mozna otworzyc pliku: %1").arg(path));
+        setError(QStringLiteral("Cannot open file: %1").arg(path));
         return false;
     }
 
     m_signature = reader.readU32();
     if (expectedSignature != 0 && m_signature != expectedSignature) {
-        setError(QStringLiteral("Nieprawidlowa sygnatura .dat (oczekiwano 0x%1, otrzymano 0x%2)")
+        setError(QStringLiteral("Invalid .dat signature (expected 0x%1, got 0x%2)")
                       .arg(expectedSignature, 0, 16)
                       .arg(m_signature, 0, 16));
         return false;
@@ -146,7 +142,7 @@ bool DatReader::loadFile(const QString &path, quint32 expectedSignature)
     const uint16_t maxMissileId   = reader.readU16();
 
     if (!reader.good()) {
-        setError(QStringLiteral("Blad odczytu naglowka pliku .dat"));
+        setError(QStringLiteral("Failed to read the .dat header"));
         return false;
     }
 
@@ -154,17 +150,13 @@ bool DatReader::loadFile(const QString &path, quint32 expectedSignature)
     std::vector<ClientItem> effects;
     std::vector<ClientItem> outfits;
 
-    // Items (ID 100..max_item_id) - przechowujemy
     readCategory(reader, &items, 100, m_maxItemId);
 
     if (!reader.good() && reader.hasError()) {
-        setError(QStringLiteral("Blad parsowania items: %1").arg(reader.getError()));
+        setError(QStringLiteral("Failed to parse items: %1").arg(reader.getError()));
         return false;
     }
 
-    // Outfits - PRZECHOWUJEMY (potwory/NPC na spawnach; outfits=true bo frame
-    // groups w 10.57+ przesuwaja strumien). Effects - PRZECHOWUJEMY (efekty
-    // magiczne). Missiles - odrzucamy.
     readCategory(reader, &outfits, 1, maxOutfitId, true);
     readCategory(reader, &effects, 1, maxEffectId);
     readCategory(reader, nullptr, 1, maxMissileId);
@@ -201,8 +193,7 @@ void DatReader::readCategory(BinaryReader &reader,
         if (outItems) {
             outItems->push_back(std::move(item));
         }
-        // jesli outItems == nullptr: item zostaje zniszczony po wyjsciu z bloku,
-        // ale strumien zostal poprawnie przesuniety przez readItemFlags/readSpriteData
+
     }
 }
 
@@ -319,29 +310,27 @@ void DatReader::readItemFlags(ClientItem &item, BinaryReader &reader)
             item.floor_change = true;
             break;
 
-        // --- Flagi nowszych wersji (payloady 1:1 z RME) ---
-        case CLOTH:            // 7.9+: slot ubrania
+        case CLOTH:
             reader.readU16();
             break;
-        case MARKET_ITEM: {    // 10.10+: category u16, tradeAs u16, showAs u16,
-            reader.readBytes(6);          //         nazwa (string u16-len!), prof u16, lvl u16
-            reader.readString();          // length-prefixed - MUSI byc przeczytana
+        case MARKET_ITEM: {
+            reader.readBytes(6);
+            reader.readString();
             reader.readBytes(4);
             break;
         }
-        case DEFAULT_ACTION:   // 10.x (RME: DatFlagUsable, payload u16)
+        case DEFAULT_ACTION:
             reader.readU16();
             break;
-        case WRAPPABLE:        // bez payloadu
+        case WRAPPABLE:
         case UNWRAPPABLE:
         case TOP_EFFECT:
-        case CHARGEABLE:       // 7.80-8.54 (bez payloadu)
-        case NO_MOVE_ANIMATION: // 10.10+ (bez payloadu)
+        case CHARGEABLE:
+        case NO_MOVE_ANIMATION:
             break;
 
         default:
-            // Nieznana flaga bez payloadu - jak RME: ostrzezenie i czytaj dalej.
-            // (Flagi z payloadem sa wszystkie obsluzone powyzej.)
+
             break;
         }
     }
@@ -349,36 +338,34 @@ void DatReader::readItemFlags(ClientItem &item, BinaryReader &reader)
 
 void DatReader::readSpriteData(ClientItem &item, BinaryReader &reader, bool outfits)
 {
-    // 10.57+: OUTFITY maja grupy klatek (idle/moving) - kazda grupa to osobny
-    // komplet geometrii+sprite'ow. Itemy/efekty/pociski: zawsze 1 "grupa".
+
     uint8_t groupCount = 1;
     const bool hasGroups = outfits && frameGroups();
     if (hasGroups) groupCount = std::max<uint8_t>(1, reader.readU8());
 
     for (uint8_t g = 0; g < groupCount; ++g) {
-        if (hasGroups) reader.readU8();   // typ grupy (idle/moving) - pomijamy
+        if (hasGroups) reader.readU8();
 
         item.width  = reader.readU8();
         item.height = reader.readU8();
 
         if (item.width > 1 || item.height > 1) {
-            reader.readU8(); // exact_size - nieuzywane, czytamy zeby nie zgubic offsetu
+            reader.readU8();
         }
 
         item.layers    = reader.readU8();
         item.pattern_x = reader.readU8();
         item.pattern_y = reader.readU8();
-        item.pattern_z = reader.readU8(); // czytany z pliku od 7.55+
+        item.pattern_z = reader.readU8();
         item.frames    = reader.readU8();
 
-        // 10.50+: animowane rzeczy maja naglowek animacji + czasy klatek.
         if (item.frames > 1 && frameDurations()) {
-            reader.readU8();                       // async (0/1)
-            reader.readU32();                      // loop count (i32)
-            reader.readU8();                       // start frame (i8)
+            reader.readU8();
+            reader.readU32();
+            reader.readU8();
             for (uint32_t f = 0; f < item.frames; ++f) {
-                reader.readU32();                  // min duration ms
-                reader.readU32();                  // max duration ms
+                reader.readU32();
+                reader.readU32();
             }
         }
 
@@ -386,17 +373,17 @@ void DatReader::readSpriteData(ClientItem &item, BinaryReader &reader, bool outf
         if (g == 0) item.sprite_ids.reserve(spriteCount);
 
         for (uint32_t i = 0; i < spriteCount; ++i) {
-            // 9.60+: sprite ID w .dat to u32 (extended); starsze: u16.
+
             const uint32_t sid = extendedSprites() ? reader.readU32() : reader.readU16();
             if (g == 0) item.sprite_ids.push_back(sid);
-            // kolejne grupy (outfity): tylko przesuwamy strumien
+
         }
     }
 }
 
 const ClientItem *DatReader::outfitByLookType(uint16_t lookType) const
 {
-    // Looktype 1-indeksowany: outfit N lezy pod m_outfits[N-1].
+
     if (lookType == 0 || static_cast<size_t>(lookType) > m_outfits.size()) {
         return nullptr;
     }
@@ -413,7 +400,7 @@ QVariantMap DatReader::outfitPreview(int lookType) const
     const int h = std::max<int>(1, of->height);
     const int patX = std::max<int>(1, of->pattern_x);
     const int layers = std::max<int>(1, of->layers);
-    const int dir = std::min(2, patX - 1);   // 2 = poludnie (jak render na mapie)
+    const int dir = std::min(2, patX - 1);
 
     QVariantList ids;
     for (int hh = 0; hh < h; ++hh)
@@ -440,7 +427,7 @@ QVariantMap DatReader::itemPreview(int clientId) const
     QVariantList ids;
     for (int hh = 0; hh < h; ++hh)
         for (int ww = 0; ww < w; ++ww) {
-            const int idx = hh * w + ww;   // warstwa 0, pattern 0, klatka 0
+            const int idx = hh * w + ww;
             ids.push_back(idx < static_cast<int>(ci->sprite_ids.size())
                               ? QVariant(ci->sprite_ids[static_cast<size_t>(idx)])
                               : QVariant(0u));
@@ -468,7 +455,7 @@ const ClientItem *DatReader::itemByClientId(uint16_t clientId) const
 const ClientItem *DatReader::effectById(int id) const
 {
     if (id < 1 || static_cast<size_t>(id) > m_effects.size()) return nullptr;
-    return &m_effects[static_cast<size_t>(id - 1)];   // efekty 1-indeksowane
+    return &m_effects[static_cast<size_t>(id - 1)];
 }
 
 quint32 DatReader::previewSpriteIdAt(int row) const

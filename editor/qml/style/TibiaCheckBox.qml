@@ -1,11 +1,9 @@
+import Tibia 1.0
 import QtQuick
 
-// Checkbox w stylu classic Tibia UI - zastepuje wlasnorecznie rysowane Rectangle
-// przelaczniki (np. "Show shade", "Show lower floors"). Zrodlo: checkbox_2.png
-// (12x24, 2 stany po 12px), stany wykrojone offline -> checkbox_off.png/checkbox_on.png.
 Item {
     id: root
-    signal clicked()
+    signal clicked
     property bool checked: false
     property alias text: label.text
 
@@ -14,15 +12,20 @@ Item {
 
     Image {
         id: box
-        width: 12; height: 12
+        width: 12
+        height: 12
         anchors.verticalCenter: parent.verticalCenter
         smooth: false
-        source: root.checked ? (uiTheme.tex + "checkbox_on.png") : (uiTheme.tex + "checkbox_off.png")
+        source: root.checked ? (Backend.uiTheme.tex + "checkbox_on.png") : (Backend.uiTheme.tex + "checkbox_off.png")
     }
 
     Text {
         id: label
-        anchors { left: box.right; leftMargin: 8; verticalCenter: parent.verticalCenter }
+        anchors {
+            left: box.right
+            leftMargin: 8
+            verticalCenter: parent.verticalCenter
+        }
         color: "#c0c0c0"
         font.pixelSize: 12
     }

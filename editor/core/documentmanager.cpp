@@ -10,7 +10,7 @@
 DocumentManager::DocumentManager(QObject *parent)
     : QObject(parent)
 {
-    newDocument();   // niezmiennik: zawsze >= 1 dokument (current() nigdy null)
+    newDocument();
 }
 
 void DocumentManager::setCurrentIndex(int i)
@@ -32,7 +32,7 @@ QVariantList DocumentManager::tabs() const
         QVariantMap t;
         const QString path = doc->filePath();
         t.insert(QStringLiteral("title"),
-                 path.isEmpty() ? QStringLiteral("(nowa mapa)") : QFileInfo(path).fileName());
+                 path.isEmpty() ? QStringLiteral("(new map)") : QFileInfo(path).fileName());
         t.insert(QStringLiteral("dirty"), doc->isDirty());
         t.insert(QStringLiteral("loaded"), doc->isLoaded());
         out.push_back(t);
@@ -55,23 +55,17 @@ bool DocumentManager::closeDocument(int i)
 {
     if (i < 0 || i >= m_docs.size()) return false;
 
-    // Zapamietaj AKTYWNY dokument PRZED usunieciem: takeAt(i) przesuwa w dol indeksy
-    // wszystkich kart za i, wiec samo trzymanie m_current jako liczby przelaczaloby
-    // po cichu na inna mape gdy zamkniemy karte LEZACA PRZED aktywna. Zamiast liczyc
-    // na indeksie, po usunieciu odnajdujemy ten sam wskaznik.
     OtbmReader *cur = m_docs.value(m_current, nullptr);
 
     OtbmReader *doc = m_docs.takeAt(i);
-    // deleteLater, nie delete: MapView/bindingi QML moga jeszcze trzymac wskaznik
-    // dopoki currentChanged sie nie przepropaguje - kasujemy po powrocie do petli.
+
     doc->deleteLater();
 
     if (m_docs.isEmpty()) {
-        newDocument();   // emituje oba sygnaly
-        return true;     // nic zaladowanego - QML wraca na ekran startowy
+        newDocument();
+        return true;
     }
-    // Aktywna karta nadal istnieje (zamknieto inna) -> zostajemy na niej, tylko z
-    // poprawionym indeksem. Zamknieto aktywna -> klamrujemy do dostepnego zakresu.
+
     const int idx = (cur && cur != doc) ? static_cast<int>(m_docs.indexOf(cur)) : -1;
     m_current = idx >= 0 ? idx
                          : std::min(m_current, static_cast<int>(m_docs.size()) - 1);
@@ -93,7 +87,7 @@ int DocumentManager::indexOfPath(const QString &path) const
 
 void DocumentManager::hookDocument(OtbmReader *doc)
 {
-    // Kazda zmiana tozsamosci/stanu dokumentu odswieza liste kart.
+
     connect(doc, &OtbmReader::filePathChanged, this, &DocumentManager::tabsChanged);
     connect(doc, &OtbmReader::dirtyChanged, this, &DocumentManager::tabsChanged);
     connect(doc, &OtbmReader::loadedChanged, this, &DocumentManager::tabsChanged);

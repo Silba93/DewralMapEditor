@@ -1,5 +1,4 @@
-// MapView - czesc ATLASU: przyrostowy atlas sprite'ow (CPU, QImage) ze
-// stabilnymi slotami + wariant highlight (szary sylwet do podswietlen).
+
 #include "mapview.h"
 #include "mapview_p.h"
 
@@ -18,6 +17,20 @@
 #include <cstring>
 #include <vector>
 
+void MapView::resetAtlas()
+{
+    m_atlasImage = QImage();
+    m_atlasPatches.clear();
+    m_atlasRows = 0;
+    m_spriteToSlot.clear();
+    m_atlasSlots.clear();
+    m_ensuredServerIds.clear();
+    m_ensuredOutfits.clear();
+
+    ++m_atlasGeneration;
+    ++m_dataVersion;
+}
+
 void MapView::addSpritesToAtlas(const QSet<uint32_t> &sids)
 {
     if (!m_spr) return;
@@ -25,49 +38,69 @@ void MapView::addSpritesToAtlas(const QSet<uint32_t> &sids)
     for (uint32_t sid : sids)
         if (sid != 0 && !m_spriteToSlot.contains(sid)) toAdd.push_back(sid);
     if (toAdd.empty()) return;
+    std::sort(toAdd.begin(), toAdd.end());
 
-    constexpr int cols = 64;                 // staly -> pozycje slotow (px) stabilne
-    constexpr int headroom = 1024;           // zapas slotow na dokladanie bez resize
+    constexpr int cols = 64;
+    constexpr int headroom = 1024;
     const int oldCount = static_cast<int>(m_atlasSlots.size());
     const int newCount = oldCount + static_cast<int>(toAdd.size());
-    const int curRows = m_atlasImage.isNull() ? 0 : m_atlasImage.height() / kSprite;
-    const int capacity = curRows * cols;
+    const int capacity = m_atlasRows * cols;
 
-    // Resize TYLKO gdy braknie miejsca (rzadko). Zmiana ROZMIARU atlasu zmienia UV
-    // istniejacych sprite'ow (UV=px/rozmiar), wiec wtedy wymuszamy przebudowe buforow
-    // (bump dataVersion). W zwyklym przypadku rozmiar staly => UV stabilne => zero smieci.
     bool grew = false;
-    if (m_atlasImage.isNull() || newCount > capacity) {
+    if (oldCount == 0 || newCount > capacity) {
         const int rows = (newCount + headroom + cols - 1) / cols;
         QImage img(cols * kSprite, std::max(1, rows) * kSprite, QImage::Format_RGBA8888);
         img.fill(Qt::transparent);
-        if (!m_atlasImage.isNull()) { QPainter cp(&img); cp.drawImage(0, 0, m_atlasImage); }
+
+        if (!m_atlasImage.isNull()) {
+            QPainter cp(&img);
+            cp.drawImage(0, 0, m_atlasImage);
+        } else if (oldCount > 0) {
+            QPainter cp(&img);
+            m_spr->beginBulkAccess();
+            for (auto it = m_spriteToSlot.constBegin(); it != m_spriteToSlot.constEnd(); ++it) {
+                const int oldSlot = it.value();
+                auto sprite = m_spr->loadSpriteUncached(it.key());
+                if (!sprite || sprite->image.isNull()) continue;
+                cp.drawImage((oldSlot % cols) * kSprite,
+                             (oldSlot / cols) * kSprite,
+                             sprite->image);
+            }
+            m_spr->endBulkAccess();
+        }
+
         m_atlasImage = img;
+        m_atlasPatches.clear();
+        m_atlasRows = rows;
         grew = true;
     }
 
-    QPainter p(&m_atlasImage);
+    std::unique_ptr<QPainter> painter;
+    if (!m_atlasImage.isNull()) painter = std::make_unique<QPainter>(&m_atlasImage);
+
+    m_spr->beginBulkAccess();
     int slot = oldCount;
     for (uint32_t sid : toAdd) {
         const int sx = (slot % cols) * kSprite;
         const int sy = (slot / cols) * kSprite;
-        auto sprite = m_spr->loadSprite(sid);
-        if (sprite && !sprite->image.isNull())
-            p.drawImage(sx, sy, sprite->image);
+        auto sprite = m_spr->loadSpriteUncached(sid);
+        if (sprite && !sprite->image.isNull()) {
+            if (painter) painter->drawImage(sx, sy, sprite->image);
+            else m_atlasPatches.push_back(AtlasPatch{sx, sy, sprite->image});
+        }
         m_spriteToSlot.insert(sid, slot);
         m_atlasSlots.push_back(QRect(sx, sy, kSprite, kSprite));
         ++slot;
     }
-    p.end();
-    ++m_atlasGeneration;        // tekstura zmieniona -> MapGLView przesle ja na nowo
-    if (grew) ++m_dataVersion;  // zmiana rozmiaru -> UV inne -> przebuduj bufory (rzadko)
+    m_spr->endBulkAccess();
+    if (painter) painter->end();
+    ++m_atlasGeneration;
+    if (grew) ++m_dataVersion;
 }
 
 void MapView::ensureItemSprites(int serverId)
 {
-    // Cache: to leci raz na KAZDY postawiony item, a wynik dla danego server id sie
-    // nie zmienia (atlas przyrostowy). Bez tego Shift+drag budowal QSet ze sprite_ids
-    // setki tysiecy razy dla tego samego itemu.
+
     if (m_ensuredServerIds.contains(serverId)) return;
     m_ensuredServerIds.insert(serverId);
 
@@ -81,11 +114,9 @@ void MapView::ensureItemSprites(int serverId)
 
 void MapView::buildAtlasImage()
 {
-    // Pierwsze wywolanie (po wczytaniu) buduje atlas ze WSZYSTKICH sprite'ow mapy +
-    // efekt #3. Atlas jest przyrostowy, wiec kolejne edycje tylko dokladaja nowe.
+
     if (!m_otbm || !m_otbm->isLoaded() || !m_otb || !m_dat || !m_spr) return;
 
-    // Nowa mapa/wersja klienta = te same server id moga wskazywac inne sprite'y.
     m_ensuredServerIds.clear();
     m_ensuredOutfits.clear();
 
@@ -98,8 +129,7 @@ void MapView::buildAtlasImage()
             if (!ci) continue;
             for (uint32_t sid : ci->sprite_ids) if (sid != 0) used.insert(sid);
         }
-        // Outfity potworow wczytanych ze spawns.xml - bez tego pierwszy render
-        // mapy ze spawnami pokazalby puste kafle zamiast potworow.
+
         if (!tile.creature_name.isEmpty() && m_creatureStore) {
             if (const auto *ct = m_creatureStore->byName(tile.creature_name))
                 if (const ClientItem *of = m_dat->outfitByLookType(static_cast<uint16_t>(ct->lookType)))
@@ -116,4 +146,3 @@ int MapView::atlasSlotForSprite(uint32_t spriteId) const
 {
     return m_spriteToSlot.value(spriteId, -1);
 }
-

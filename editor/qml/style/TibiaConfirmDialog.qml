@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 
-// Proste potwierdzenie Tak/Nie w stylu classic UI. Uzywane przy hurtowych operacjach
-// na calej mapie (Borderize/Randomize Map), gdzie warto zapytac przed zmiana.
 TibiaDialog {
     id: root
     property string message: ""
@@ -24,12 +22,15 @@ TibiaDialog {
             spacing: 6
             anchors.horizontalCenter: parent.horizontalCenter
             TibiaButton {
-                text: "Tak"
+                text: "Yes"
                 width: 90
-                onClicked: { root.accepted(); root.close() }
+                onClicked: {
+                    root.accepted();
+                    root.close();
+                }
             }
             TibiaButton {
-                text: "Anuluj"
+                text: "Cancel"
                 width: 90
                 onClicked: root.close()
             }

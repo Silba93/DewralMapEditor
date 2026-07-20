@@ -46,7 +46,7 @@ uint16_t BinaryReader::readU16()
     uint16_t value = 0;
     qint64 n = m_file.read(reinterpret_cast<char *>(&value), 2);
     if (n != 2) setError(QStringLiteral("Failed to read U16"));
-    return value; // plik Tibii jest little-endian, host x86/x64 tez - bezposredni odczyt jest poprawny
+    return value;
 }
 
 uint32_t BinaryReader::readU32()

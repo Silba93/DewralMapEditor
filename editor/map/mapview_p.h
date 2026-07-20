@@ -1,16 +1,11 @@
 #ifndef MAPVIEW_P_H
 #define MAPVIEW_P_H
 
-// Prywatne helpery wspolne dla plikow implementacyjnych MapView (mapview*.cpp).
-// NIE dolaczac poza editor/map/.
-
 #include "datreader.h"
 
 #include <algorithm>
 #include <cstdint>
 
-// Dzielenie calkowite z zaokragleniem W DOL (takze dla ujemnych) - do mapowania
-// wspolrzednych kafelkow na wspolrzedne chunkow.
 inline int floorDiv(int a, int b)
 {
     int q = a / b;
@@ -20,21 +15,6 @@ inline int floorDiv(int a, int b)
     return q;
 }
 
-// Wylicza sprite ID dla komorki (ww,hh,layer) itemu na pozycji (posX,posY,posZ).
-// Pattern wybierany z pozycji kafelka (jak w Tibii: px=x%pattern_x itd.) - dzieki
-// temu gory/sciany/bordery/ground pokazuja wlasciwe warianty sprite'a.
-//
-// frame: klatka ANIMACJI (0 = pierwsza). W ukladzie .dat klatki to najbardziej
-// zewnetrzny wymiar siatki sprite'ow - indeks klatki N to po prostu indeks klatki 0
-// przesuniety o N * (rozmiar calej siatki jednej klatki). Wolajacy podaje klatke z
-// globalnego zegara (RME: elapsed/500 % frames, ITEM_FRAME_DURATION=500 ms dla
-// klientow 7.x bez czasow klatek w .dat).
-//
-// WYJATEK: itemy stackowalne (gold coin, itp.) biora pattern z COUNT, nie z pozycji.
-// W .dat maja siatke 4x2 = 8 wariantow sterty (1,2,3,4,5-9,10-24,25-49,50+). Gdyby
-// bralo z pozycji, wielkosc sterty zalezalaby od tego GDZIE item lezy i zmienialaby
-// sie po kazdym przesunieciu. Mapowanie 1:1 z otclient Item::calculatePatterns
-// (rownowaznik RME MapDrawer::BlitItem subtype 0..7 na siatce 4x2).
 inline uint32_t cellSpriteId(const ClientItem *ci, int ww, int hh, int layer, int w, int h,
                              int posX, int posY, int posZ, int count = 1, int frame = 0)
 {
@@ -43,7 +23,7 @@ inline uint32_t cellSpriteId(const ClientItem *ci, int ww, int hh, int layer, in
     const int patZ = std::max(1, static_cast<int>(ci->pattern_z));
     const int layers = std::max(1, static_cast<int>(ci->layers));
     int px, py;
-    // Warunek 4x2 jak w otclient - chroni stackowalne bez pelnej siatki wariantow.
+
     if (ci->is_stackable && patX == 4 && patY == 2) {
         if (count <= 1)      { px = 0;         py = 0; }
         else if (count < 5)  { px = count - 1; py = 0; }
@@ -56,7 +36,7 @@ inline uint32_t cellSpriteId(const ClientItem *ci, int ww, int hh, int layer, in
         py = ((posY % patY) + patY) % patY;
     }
     const int pz = ((posZ % patZ) + patZ) % patZ;
-    // Rozmiar siatki JEDNEJ klatki - offset kolejnych klatek animacji.
+
     const int frameStride = patZ * patY * patX * layers * h * w;
     const int fr = std::max(0, frame) % std::max(1, static_cast<int>(ci->frames));
     const int idx = fr * frameStride
@@ -67,4 +47,4 @@ inline uint32_t cellSpriteId(const ClientItem *ci, int ww, int hh, int layer, in
     return ci->sprite_ids[static_cast<size_t>(idx)];
 }
 
-#endif // MAPVIEW_P_H
+#endif
