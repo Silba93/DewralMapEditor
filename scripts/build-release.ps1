@@ -12,6 +12,7 @@ $vcpkgExecutable = Join-Path $vcpkgRoot "vcpkg.exe"
 $vcpkgTag = "2026.03.18"
 $vcpkgBaseline = "c3867e714dd3a51c272826eea77267876517ed99"
 $releaseArchive = Join-Path $repositoryRoot "release\DewralMapEditor-windows-x64.zip"
+$sourceArchive = Join-Path $repositoryRoot "release\DewralMapEditor-source.zip"
 
 function Require-Command {
     param(
@@ -127,9 +128,13 @@ finally {
 if (-not (Test-Path -LiteralPath $releaseArchive)) {
     throw "The build completed, but the release archive was not created."
 }
+if (-not (Test-Path -LiteralPath $sourceArchive)) {
+    throw "The build completed, but the source archive was not created."
+}
 
 $archiveSize = [math]::Round((Get-Item -LiteralPath $releaseArchive).Length / 1MB, 2)
+$sourceArchiveSize = [math]::Round((Get-Item -LiteralPath $sourceArchive).Length / 1MB, 2)
 Write-Host ""
-Write-Host "Release package created successfully." -ForegroundColor Green
-Write-Host "Archive: $releaseArchive"
-Write-Host "Size: $archiveSize MB"
+Write-Host "Release packages created successfully." -ForegroundColor Green
+Write-Host "Ready-to-run: $releaseArchive ($archiveSize MB)"
+Write-Host "Source code:  $sourceArchive ($sourceArchiveSize MB)"

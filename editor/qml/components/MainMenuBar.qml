@@ -23,9 +23,10 @@ TibiaMenuBar {
     required property var borderizeConfirm
     required property var randomizeConfirm
     property int menuLeftInset: 4
+    property int menuVerticalOffset: -4
 
     anchors.verticalCenter: menuBar.titleBarItem.verticalCenter
-    anchors.verticalCenterOffset: -4
+    anchors.verticalCenterOffset: menuBar.menuVerticalOffset
     anchors.left: menuBar.titleBarItem.left
     anchors.leftMargin: menuBar.menuLeftInset
 

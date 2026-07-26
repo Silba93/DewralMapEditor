@@ -14,9 +14,14 @@ Dewral Map Editor is inspired by Remere's Map Editor:
 
     https://github.com/hampusborgos/rme
 
-Some brush, border, tileset, and creature definitions are derived from
-OpenTibia/RME-compatible data. Their original copyright and license notices
-must be preserved where applicable.
+Built-in brush, border, doodad, tileset, item, and creature definitions are
+derived from OTAcademy/RME:
+
+    https://github.com/OTAcademy/RME
+
+The exact source revision and profile mapping are recorded in
+data/RME_SOURCE.md. Original copyright and license notices must be preserved
+where applicable.
 
 Tibia is a trademark of CipSoft GmbH. Dewral Map Editor is an independent
 community project and is not affiliated with or endorsed by CipSoft GmbH.

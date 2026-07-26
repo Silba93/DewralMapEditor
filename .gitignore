@@ -28,6 +28,8 @@ CMakeUserPresets.json
 .idea/
 *.qmlc
 *.jsc
+*.pyc
+__pycache__/
 
 # ---- Local agent / editor state ----
 .claude/
@@ -44,12 +46,8 @@ items.otb
 # Custom named client profiles are local. Keep only the built-in numeric
 # profile definitions under version control.
 /data/*/
-!/data/760/
-!/data/760/**
-!/data/772/
-!/data/772/**
-!/data/1098/
-!/data/1098/**
+!/data/[0-9]*/
+!/data/[0-9]*/**
 
 # ---- Local test maps / scratch data ----
 *.otbm

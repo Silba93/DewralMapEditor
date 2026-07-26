@@ -32,7 +32,7 @@
       "configurePreset": "windows-vcpkg",
       "configuration": "Release",
       "targets": [
-        "package_release"
+        "package_all"
       ],
       "jobs": 0
     }

@@ -25,26 +25,29 @@ This is the hero image directly below the README introduction.
 
 This image belongs in the **Client profiles** subsection.
 
-## `brushes-and-palettes.png`
+## `brush-editor.png`
 
 - Recommended size: 1600x900 or larger.
-- Show a map being edited with a terrain or doodad palette open.
-- Keep brush size controls and the active editing mode visible.
+- Open the Brush Editor with a representative brush selected.
+- Show its configuration, item list, and preview or editing controls.
+- Keep the complete dialog visible and avoid exposing private file paths.
 - README alt text:
-  `Editing terrain with brushes and item palettes in DME`
+  `Creating and editing a brush in the DME Brush Editor`
 
-This image belongs in the **Brushes and palettes** subsection.
+This image belongs in the **Brush Editor** subsection.
 
-## `ingame-preview.png`
+## `classic-ui.png`
 
 - Recommended size: 1600x900 or larger.
-- Enable in-game preview and place the player in a recognizable interior or
-  outdoor area.
-- Keep enough editor chrome visible to make it clear this is DME.
+- Select Classic UI in the theme settings.
+- Open a visually interesting map and keep the textured menus, toolbar,
+  palettes, and status bar visible.
+- Use a different composition from `editor-overview.png` so both available
+  interfaces are easy to compare.
 - README alt text:
-  `Walking through an OTBM map in DME in-game preview mode`
+  `Dewral Map Editor using the Tibia-inspired Classic UI`
 
-This image belongs in the **In-game preview** subsection.
+This image belongs in the **Classic UI** subsection.
 
 ## Inserting the images
 

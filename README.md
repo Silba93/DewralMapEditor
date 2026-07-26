@@ -17,7 +17,7 @@ visible, no private paths. Then replace this comment with:
 
 ## Highlights
 
-- Opens and saves OTBM maps for Tibia 7.72 through 10.98+ client profiles.
+- Opens and saves OTBM maps for Tibia 7.60 through 10.98+ client profiles.
 - Supports custom client profiles and remembers a separate asset directory for
   each profile.
 - Uses an instanced OpenGL renderer with chunk caching, smooth pan and zoom,
@@ -29,6 +29,8 @@ visible, no private paths. Then replace this comment with:
   cut/copy/paste, undo/redo, item properties, search, and replacement tools.
 - Includes an in-game preview mode for walking around the map. [ WIP ]
 - Loads maps even when optional house and spawn sidecar files are absent.
+- Lets you switch between the modern GitHub-inspired interface and the
+  Tibia-inspired Classic UI from the theme settings.
 - Produces a self-contained Windows release folder and ZIP archive.
 
 ## Screenshots
@@ -47,25 +49,28 @@ Markdown: ![DME startup window with a configured custom client profile](docs/scr
 
 Add `docs/screenshots/startup-client-profile.png` here.
 
-<!-- SCREENSHOT SLOT: EDITING
-File: docs/screenshots/brushes-and-palettes.png
-Alt text: Editing terrain with brushes and item palettes in DME
-Markdown: ![Editing terrain with brushes and item palettes in DME](docs/screenshots/brushes-and-palettes.png)
+<!-- SCREENSHOT SLOT: BRUSH EDITOR
+File: docs/screenshots/brush-editor.png
+Alt text: Creating and editing a brush in the DME Brush Editor
+Markdown: ![Creating and editing a brush in the DME Brush Editor](docs/screenshots/brush-editor.png)
 -->
 
-### Brushes and palettes
+### Brush Editor
 
-Add `docs/screenshots/brushes-and-palettes.png` here.
+Add `docs/screenshots/brush-editor.png` here.
 
-<!-- SCREENSHOT SLOT: PREVIEW
-File: docs/screenshots/ingame-preview.png
-Alt text: Walking through an OTBM map in DME in-game preview mode
-Markdown: ![Walking through an OTBM map in DME in-game preview mode](docs/screenshots/ingame-preview.png)
+<!-- SCREENSHOT SLOT: CLASSIC UI
+File: docs/screenshots/classic-ui.png
+Alt text: Dewral Map Editor using the Tibia-inspired Classic UI
+Markdown: ![Dewral Map Editor using the Tibia-inspired Classic UI](docs/screenshots/classic-ui.png)
 -->
 
-### In-game preview
+### Classic UI
 
-Add `docs/screenshots/ingame-preview.png` here.
+The interface can be changed at any time in the theme settings. Choose the
+modern GitHub-inspired layout or the textured, Tibia-inspired Classic UI.
+
+Add `docs/screenshots/classic-ui.png` here.
 
 ## Download and run
 
@@ -87,6 +92,20 @@ Add `docs/screenshots/ingame-preview.png` here.
 
 House and spawn XML sidecar files are optional. When present, DME loads them
 with the map. When absent, the map still opens normally.
+
+### Release files
+
+Each release provides two independent archives:
+
+- `DewralMapEditor-windows-x64.zip` — ready-to-run Windows application with
+  `DME.exe`, the required Qt runtime, built-in editor data, licenses, and
+  documentation. Users do not need Qt Creator or a compiler.
+- `DewralMapEditor-source.zip` — complete source package without executables,
+  DLLs, build output, or client assets. It contains the CMake/vcpkg build files
+  and the generated RME material profiles.
+
+Do not download only `DME.exe`. The executable requires the DLL and QML files
+that are shipped beside it in the ready-to-run archive.
 
 ## Build on Windows without Qt Creator
 
@@ -122,7 +141,7 @@ The script:
 4. configures the `windows-vcpkg` CMake preset;
 5. builds the Release configuration;
 6. deploys only the required Qt runtime;
-7. creates the production folder and ZIP archive.
+7. creates the ready-to-run and source folders and ZIP archives.
 
 Build output:
 
@@ -136,7 +155,9 @@ release/
 |   |-- NOTICE
 |   |-- README.md
 |   `-- required Qt runtime files
-`-- DewralMapEditor-windows-x64.zip
+|-- DewralMapEditor-windows-x64.zip
+|-- DewralMapEditor-source/
+`-- DewralMapEditor-source.zip
 ```
 
 Local custom profiles and client binaries are removed from the release
@@ -190,6 +211,25 @@ The official Windows preset uses the release-only `x64-windows-release`
 triplet to avoid compiling and storing an unused Debug copy of Qt. It targets
 Visual Studio 2022. vcpkg manifest mode is activated through the CMake
 toolchain specified in `CMakePresets.json`.
+
+## Updating the built-in RME data
+
+Built-in brushes, doodads, item groups, and RAW/terrain tilesets are generated
+from the text material definitions in
+[OTAcademy/RME](https://github.com/OTAcademy/RME). Client binaries are never
+copied.
+
+After cloning RME, regenerate every supported profile with:
+
+```powershell
+python scripts/import-rme-data.py --rme C:\path\to\RME
+```
+
+The importer writes `brushes.json`, `tilesets.json`, `items.xml`, and
+`creatures.xml` for the built-in profiles. RME does not provide separate
+material directories for Tibia 7.72, 7.80, or 7.92, so those profiles use the
+conservative RME 7.60 material set. All other profiles use their matching RME
+directory.
 
 ## Useful controls
 

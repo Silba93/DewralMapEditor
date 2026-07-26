@@ -165,4 +165,15 @@ if(WIN32)
                 -P "${CMAKE_SOURCE_DIR}/cmake/CreateReleasePackage.cmake"
         COMMENT "Creating the production Windows release package"
         VERBATIM)
+
+    add_custom_target(package_source
+        COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}"
+                "-DRELEASE_ROOT=${CMAKE_SOURCE_DIR}/release"
+                -P "${CMAKE_SOURCE_DIR}/cmake/CreateSourcePackage.cmake"
+        COMMENT "Creating the source release package"
+        VERBATIM)
+
+    add_custom_target(package_all
+        DEPENDS package_release package_source)
 endif()

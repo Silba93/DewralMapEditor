@@ -113,6 +113,35 @@ Window {
             z: 2
         }
 
+        Rectangle {
+            id: dmeAppIcon
+            visible: root.githubUi
+            anchors {
+                left: parent.left
+                leftMargin: 20
+                verticalCenter: parent.verticalCenter
+            }
+            width: 30
+            height: 30
+            radius: 7
+            color: "#174D2B"
+            border {
+                width: 1
+                color: "#2EA043"
+            }
+            z: 5
+
+            Image {
+                anchors.centerIn: parent
+                width: 20
+                height: 20
+                source: "qrc:/ui/github/app-icon.png"
+                sourceSize: Qt.size(20, 20)
+                fillMode: Image.PreserveAspectFit
+                smooth: false
+            }
+        }
+
         Row {
             id: winButtons
             anchors {
@@ -147,7 +176,7 @@ Window {
             id: titleDragArea
             anchors.fill: parent
             anchors {
-                leftMargin: root.githubUi ? 410 : 0
+                leftMargin: root.githubUi ? 460 : 0
                 rightMargin: root.githubUi ? 138 : 138
             }
             z: 0
@@ -183,8 +212,9 @@ Window {
 
     MainMenuBar {
         id: menuBar
-        menuLeftInset: root.githubUi ? 8 : 4
-        width: root.githubUi ? 400 : implicitWidth
+        menuLeftInset: root.githubUi ? 52 : 4
+        menuVerticalOffset: root.githubUi ? 0 : -4
+        width: root.githubUi ? 450 : implicitWidth
         appController: app
         mapView: workspace.mapView
         mapGl: workspace.mapGl

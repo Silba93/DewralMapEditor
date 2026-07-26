@@ -9,7 +9,7 @@ QtObject {
     property var clientPaths: ({})
     property var customProfiles: []
     property var mapProfiles: ({})
-    readonly property var knownVersions: [772, 780, 792, 800, 810, 820, 840, 850, 854, 860, 870, 910, 946, 954, 960, 986, 1010, 1030, 1041, 1077, 1098]
+    readonly property var knownVersions: [760, 772, 780, 792, 800, 810, 820, 840, 850, 854, 860, 870, 910, 920, 946, 954, 960, 986, 1010, 1030, 1041, 1077, 1098]
     property int loadedClientVersion: 0
     property string loadedClientKey: ""
     property string loadedClientFolder: ""
