@@ -1,0 +1,23 @@
+Dewral Map Editor
+Third-party notices
+
+Portions of the binary-format I/O implementation are derived from:
+
+    Tibia ImGui Map Editor
+    https://github.com/Open-Tibia-Tools/tibia-imgui-map-editor
+    Copyright (c) its contributors
+    License: GNU Affero General Public License v3.0
+
+The complete license text is provided in LICENSE.
+
+Dewral Map Editor is inspired by Remere's Map Editor:
+
+    https://github.com/hampusborgos/rme
+
+Some brush, border, tileset, and creature definitions are derived from
+OpenTibia/RME-compatible data. Their original copyright and license notices
+must be preserved where applicable.
+
+Tibia is a trademark of CipSoft GmbH. Dewral Map Editor is an independent
+community project and is not affiliated with or endorsed by CipSoft GmbH.
+Tibia client data and artwork are not distributed with this project.

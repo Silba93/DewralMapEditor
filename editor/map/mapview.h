@@ -80,6 +80,7 @@ class MapView : public QQuickItem
     Q_PROPERTY(bool minimapOn READ minimapOn WRITE setMinimapOn NOTIFY minimapOnChanged)
 
     Q_PROPERTY(bool showGrid READ showGrid WRITE setShowGrid NOTIFY viewFlagsChanged)
+    Q_PROPERTY(bool showWallOutlines READ showWallOutlines WRITE setShowWallOutlines NOTIFY viewFlagsChanged)
     Q_PROPERTY(bool showCreatures READ showCreatures WRITE setShowCreatures NOTIFY viewFlagsChanged)
     Q_PROPERTY(bool showSpawns READ showSpawns WRITE setShowSpawns NOTIFY viewFlagsChanged)
     Q_PROPERTY(bool showHouses READ showHouses WRITE setShowHouses NOTIFY viewFlagsChanged)
@@ -96,6 +97,9 @@ class MapView : public QQuickItem
     Q_PROPERTY(int activeZone READ activeZone WRITE setActiveZone NOTIFY activeZoneChanged)
 
     Q_PROPERTY(bool eraseMode READ eraseMode WRITE setEraseMode NOTIFY eraseModeChanged)
+    Q_PROPERTY(bool ingamePreview READ ingamePreview WRITE setIngamePreview NOTIFY ingamePreviewChanged)
+    Q_PROPERTY(int previewX READ previewX NOTIFY previewPositionChanged)
+    Q_PROPERTY(int previewY READ previewY NOTIFY previewPositionChanged)
 
 public:
     explicit MapView(QQuickItem *parent = nullptr);
@@ -118,6 +122,10 @@ public:
     bool eraseMode() const { return m_eraseMode; }
 
     void setEraseMode(bool on);
+    bool ingamePreview() const { return m_ingamePreview; }
+    void setIngamePreview(bool on);
+    int previewX() const { return m_previewX; }
+    int previewY() const { return m_previewY; }
 
     Q_INVOKABLE void toggleSelectionMode() { setSelectionMode(!m_selectionMode); }
 
@@ -164,6 +172,14 @@ public:
     void setShowGrid(bool on) {
         if (m_showGrid == on) return;
         m_showGrid = on;
+        ++m_dataVersion;
+        emit viewFlagsChanged();
+        emit contentUpdated(); update();
+    }
+    bool showWallOutlines() const { return m_showWallOutlines; }
+    void setShowWallOutlines(bool on) {
+        if (m_showWallOutlines == on) return;
+        m_showWallOutlines = on;
         ++m_dataVersion;
         emit viewFlagsChanged();
         emit contentUpdated(); update();
@@ -301,7 +317,8 @@ public:
 
     void glCollectSelectionInstances(std::vector<float> &out);
 
-    void glCollectBrushCursorInstances(std::vector<float> &out);
+    void glCollectBrushCursorInstances(std::vector<float> &out,
+                                       std::vector<float> &outBorder);
 
     void glCollectSpawnMarkInstances(std::vector<float> &out, std::vector<float> &outSel);
 
@@ -312,13 +329,20 @@ public:
     }
 
     void glCollectGhostInstances(std::vector<float> &out);
+    void glCollectPreviewPlayerInstances(std::vector<float> &out);
 
     void glCollectGridInstances(std::vector<float> &out);
 
-    void glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vector<float> &outZone);
+    void glCollectWallOutlineInstances(std::vector<float> &out);
+
+    void glCollectZoneMarkInstances(std::vector<float> &outHouse,
+                                    std::vector<float> &outPz,
+                                    std::vector<float> &outNoPvp,
+                                    std::vector<float> &outNoLogout,
+                                    std::vector<float> &outPvp);
 
     bool glRubberBandRect(double &x0, double &y0, double &x1, double &y1) const {
-        if (!m_selecting) return false;
+        if (m_ingamePreview || !m_selecting) return false;
         x0 = std::min(m_anchorX, m_rubberX) * kSprite;
         y0 = std::min(m_anchorY, m_rubberY) * kSprite;
         x1 = (std::max(m_anchorX, m_rubberX) + 1) * kSprite;
@@ -327,7 +351,8 @@ public:
     }
 
     bool glBrushRect(double &x0, double &y0, double &x1, double &y1) const {
-        if (m_movingSel || m_selecting || m_selectionMode || m_hoverX < 0) return false;
+        if (m_ingamePreview || m_movingSel || m_selecting || m_selectionMode
+            || m_hoverX < 0) return false;
         if (m_brushServerId <= 0 && m_activeZone == 0 && !m_eraseMode) return false;
         const int r = m_brushSize;
         x0 = static_cast<double>((m_hoverX - r) * kSprite);
@@ -351,7 +376,9 @@ public:
 
     Q_INVOKABLE void centerOnTile(int x, int y, int z);
 
-    Q_INVOKABLE void zoomSteps(int steps) { zoomAt(steps, width() / 2.0, height() / 2.0); }
+    Q_INVOKABLE void zoomSteps(int steps) {
+        if (!m_ingamePreview) zoomAt(steps, width() / 2.0, height() / 2.0);
+    }
     Q_INVOKABLE void clearSelection();
 
     Q_INVOKABLE QVariantList selectionDetails() const;
@@ -395,7 +422,7 @@ public:
         emit automagicChanged();
     }
 
-    void moveSelection(int dx, int dy);
+    void moveSelection(int dx, int dy, int dz = 0);
 
     Q_INVOKABLE void borderizeSelection();
 
@@ -448,6 +475,8 @@ signals:
     void showShadeChanged();
     void placeEffectChanged();
     void brushParamsChanged();
+    void ingamePreviewChanged();
+    void previewPositionChanged();
 
     void contentUpdated();
     void contextMenuRequested(qreal x, qreal y);
@@ -493,11 +522,16 @@ private:
     void ensureItemSprites(int serverId);
     int  atlasSlotForSprite(uint32_t spriteId) const;
 
-    void appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) const;
+    // "animated" (opcjonalny out-param): ustawiany na true, gdy ktorykolwiek item
+    // ma frames > 1 - animTick inwaliduje wtedy TYLKO takie chunki, zamiast
+    // czyscic cache calej mapy co tick animacji.
+    void appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out,
+                         bool *animated = nullptr) const;
 
     void appendTopItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) const;
 
-    void collectFloorChunkQuads(int z, quint64 chunkKey, std::vector<QuadRef> &out);
+    void collectFloorChunkQuads(int z, quint64 chunkKey, std::vector<QuadRef> &out,
+                                bool *animated = nullptr);
 
     void startWorker();
     void stopWorker();
@@ -505,7 +539,8 @@ private:
     void requestChunkQuads(int z, quint64 chunkKey);
 
     std::shared_ptr<const std::vector<QuadRef>> takeChunkQuads(int z, quint64 chunkKey);
-    void storeChunkQuads(int z, quint64 chunkKey, std::vector<QuadRef> &&q);
+    void storeChunkQuads(int z, quint64 chunkKey, std::vector<QuadRef> &&q,
+                         bool animated = false);
     void invalidateChunkQuads(int z, quint64 chunkKey);
 
     void refreshSelectionTint();
@@ -543,6 +578,12 @@ private:
     const OtbmTile *currentFloorTileAt(int x, int y) const;
     void applyRubberBand();
     void updateHoverText();
+    bool previewWalkable(int x, int y) const;
+    bool findPreviewStart(int &x, int &y) const;
+    bool previewDirectionForKey(int key, int &dx, int &dy, int &direction) const;
+    void movePreviewForKey(int key);
+    void centerPreviewCamera();
+    void stopPreviewMovement();
 
     void applyBrushServerId(int serverId, bool asBrush);
     void paintAt(int x, int y);
@@ -604,6 +645,10 @@ private:
     QHash<int, QHash<quint64, std::shared_ptr<const std::vector<QuadRef>>>> m_quadCache;
 
     QHash<int, QHash<quint64, quint32>> m_chunkVer;
+
+    // Chunki zawierajace animowane itemy (frames > 1) - czlonkostwo aktualizowane
+    // przy kazdym storeChunkQuads. animTick inwaliduje tylko te chunki. Pod m_quadMutex.
+    QHash<int, QSet<quint64>> m_animChunks;
 
     quint32 m_chunkVerCounter = 0;
     std::thread m_worker;
@@ -671,6 +716,19 @@ private:
     QSet<int> m_heldArrows;
     QTimer *m_arrowTimer = nullptr;
     QElapsedTimer m_arrowClock;
+    QSet<int> m_previewHeldKeys;
+    QTimer *m_previewMoveTimer = nullptr;
+    int m_previewLastKey = 0;
+    bool m_ingamePreview = false;
+    int m_previewX = 0;
+    int m_previewY = 0;
+    int m_previewDirection = 0;
+    int m_previewStepFrame = 0;
+    int m_previewLookType = 128;
+    qreal m_previewSavedOriginX = 0;
+    qreal m_previewSavedOriginY = 0;
+    int m_previewSavedTileSize = 32;
+    bool m_previewSavedLowerFloors = true;
     int m_brushServerId = 0;
     BrushStore *m_brushStore = nullptr;
     CreatureStore *m_creatureStore = nullptr;
@@ -683,6 +741,7 @@ private:
     bool m_minimapOn = false;
 
     bool m_showGrid = false;
+    bool m_showWallOutlines = true;
     bool m_showCreatures = true;
     bool m_showSpawns = true;
     bool m_showHouses = true;
@@ -752,8 +811,11 @@ private:
     bool m_movingSel = false;
     bool m_moveMoved = false;
     int m_moveSrcX = 0, m_moveSrcY = 0;
+    int m_moveSrcZ = 0;
     int m_moveServerId = 0;
     QString m_hoverText;
+    // Dlawik emisji hoverChanged (statusbar) - patrz updateHoverText().
+    QTimer *m_hoverEmitTimer = nullptr;
 
     MapMinimapService m_minimapService;
     void minimapUpdateTile(int x, int y, int z);

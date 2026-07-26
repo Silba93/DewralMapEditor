@@ -1,161 +1,284 @@
-# Dewral Map Editor (DME)
+# Dewral Map Editor
 
-An OpenTibia (**OTBM**) map editor built with **Qt 6 / QML** and a custom
-**OpenGL instanced renderer**. Inspired by, and data-compatible with,
-[Remere's Map Editor](https://github.com/hampusborgos/rme) (RME), with a few
-ideas borrowed from the [TIME](https://github.com/Open-Tibia-Tools/tibia-imgui-map-editor)
-imgui editor (e.g. lighting preview).
+Dewral Map Editor (DME) is a desktop OpenTibia map editor for OTBM maps. It
+uses a Qt 6/QML interface and a custom OpenGL renderer designed for large,
+multi-floor Tibia maps.
 
-The build produces a single executable: **`DME.exe`**.
+> Client assets are not included. DME requires your own `Tibia.dat`,
+> `Tibia.spr`, and `items.otb` files. These files are copyrighted by CipSoft
+> and must not be committed to this repository or included in a release.
 
-> ⚠️ **Client assets are not included.** DME reads the CipSoft Tibia client
-> files (`Tibia.spr`, `Tibia.dat`, `items.otb`). These are copyrighted and are
-> **not** part of this repository — supply your own locally. See
-> [Running](#running).
+<!-- SCREENSHOT SLOT: HERO
+Save the main editor screenshot as docs/screenshots/editor-overview.png.
+Recommended capture: 1600x900 or larger, GitHub theme, a map open, palette
+visible, no private paths. Then replace this comment with:
+![Dewral Map Editor with an OTBM map open](docs/screenshots/editor-overview.png)
+-->
 
----
+## Highlights
 
-## Features
+- Opens and saves OTBM maps for Tibia 7.72 through 10.98+ client profiles.
+- Supports custom client profiles and remembers a separate asset directory for
+  each profile.
+- Uses an instanced OpenGL renderer with chunk caching, smooth pan and zoom,
+  multiple visible floors, lighting preview, and optional item animations.
+- Provides terrain, doodad, item, creature, house, and custom palettes.
+- Includes ground brushes, automatic borders, wall brushes, doodad variants,
+  zone tools, spawns, creatures, houses, and towns.
+- Supports selection, multi-floor selection, moving items between floors,
+  cut/copy/paste, undo/redo, item properties, search, and replacement tools.
+- Includes an in-game preview mode for walking around the map. [ WIP ]
+- Loads maps even when optional house and spawn sidecar files are absent.
+- Produces a self-contained Windows release folder and ZIP archive.
 
-- Opens `.otbm` maps for clients **7.72 – 10.98+** — the client version is
-  auto-detected from the OTBM header, with per-version client folders (like RME).
-- **Fast OpenGL instanced renderer** — large maps, smooth pan/zoom, multi-floor
-  drawing with elevation offsets, night/lighting preview.
-- **RME-style palettes** — Terrain / Doodad / Item / RAW / Creature / House
-  plus custom palettes; tilesets imported from RME `tilesets.xml` into JSON.
-- **Ground brushes with automatic borders** — a faithful port of RME's
-  `GroundBrush::doBorders`, with data converted from `grounds.xml`/`borders.xml`.
-- **Doodad brushes** with multi-tile composite stamps and deterministic
-  variant rotation (`R`).
-- Editing: paint (with shift-drag rectangles and drag-line interpolation),
-  select (single / multi-floor modes), move, delete, cut/copy/paste,
-  undo/redo, stackable counts.
-- **Spawns & creatures**, **houses** (assigned to towns), **towns editor**,
-  Go To Position, map properties/statistics.
-- Multiple maps open at once (tabs), classic-Tibia themed UI with a
-  configurable colour theme and icon size.
+## Screenshots
 
----
+The following screenshot locations are intentionally reserved. Capture the
+images described below and save them with the exact filenames. Full guidance
+is available in [`docs/screenshots/README.md`](docs/screenshots/README.md).
 
-## Technology stack
+<!-- SCREENSHOT SLOT: STARTUP
+File: docs/screenshots/startup-client-profile.png
+Alt text: DME startup window with a configured custom client profile
+Markdown: ![DME startup window with a configured custom client profile](docs/screenshots/startup-client-profile.png)
+-->
 
-| Layer | Technology |
-|-------|-----------|
-| Language | C++17 |
-| UI framework | Qt 6 (Core, Gui, **Qml**, **Quick**, **OpenGL**) |
-| UI markup | QML (declarative) |
-| Rendering | Raw **OpenGL** via `QQuickFramebufferObject`, sprite **instancing** |
-| Build system | CMake ≥ 3.16 (Ninja) |
-| Toolchain | MinGW 13 (developed on Windows 11); portable to other Qt 6 platforms |
-| Data | JSON (brushes/tilesets), XML (creatures/towns, RME-compatible) |
+### Client profiles
 
-**Why a custom GL renderer?** Tibia maps are dense, multi-layered sprite grids.
-Instead of a scene graph, the map is drawn as a small set of instanced quads
-sampling a CPU-built sprite atlas — this keeps large maps at high frame rates
-with cheap pan/zoom. The QML layer is purely the editor shell (menus, palettes,
-dialogs); the map surface is a single GL item.
+Add `docs/screenshots/startup-client-profile.png` here.
 
----
+<!-- SCREENSHOT SLOT: EDITING
+File: docs/screenshots/brushes-and-palettes.png
+Alt text: Editing terrain with brushes and item palettes in DME
+Markdown: ![Editing terrain with brushes and item palettes in DME](docs/screenshots/brushes-and-palettes.png)
+-->
+
+### Brushes and palettes
+
+Add `docs/screenshots/brushes-and-palettes.png` here.
+
+<!-- SCREENSHOT SLOT: PREVIEW
+File: docs/screenshots/ingame-preview.png
+Alt text: Walking through an OTBM map in DME in-game preview mode
+Markdown: ![Walking through an OTBM map in DME in-game preview mode](docs/screenshots/ingame-preview.png)
+-->
+
+### In-game preview
+
+Add `docs/screenshots/ingame-preview.png` here.
+
+## Download and run
+
+1. Download `DewralMapEditor-windows-x64.zip` from the
+   [GitHub Releases page](https://github.com/dewral/DewralMapEditor/releases).
+2. Extract the complete archive. Do not move `DME.exe` away from the DLL and
+   `qml` folders shipped next to it.
+3. Run `DME.exe`.
+4. Select a client version or create a custom profile.
+5. Point the profile at a directory containing:
+
+   ```text
+   Tibia.dat
+   Tibia.spr
+   items.otb
+   ```
+
+6. Open an OTBM map.
+
+House and spawn XML sidecar files are optional. When present, DME loads them
+with the map. When absent, the map still opens normally.
+
+## Build on Windows without Qt Creator
+
+The supported release build uses Visual Studio 2022, CMake, and a pinned vcpkg
+manifest. Qt Creator and a separately installed Qt SDK are not required.
+
+### Requirements
+
+- Windows 10 or Windows 11, x64
+- [Git for Windows](https://git-scm.com/download/win)
+- [CMake 3.24 or newer](https://cmake.org/download/)
+- Visual Studio 2022 Community or Build Tools 2022 with the
+  **Desktop development with C++** workload
+- An internet connection for the first dependency build
+
+The first build downloads vcpkg and builds Qt 6.10.2. This can take a long time
+and use significant disk space. Later builds reuse the local vcpkg binary
+cache.
+
+### One-command build
+
+Clone the repository and run:
+
+```powershell
+.\build-release.bat
+```
+
+The script:
+
+1. verifies Git, CMake, Visual Studio, and the MSVC C++ toolchain;
+2. downloads the pinned vcpkg release into `.tools/vcpkg`;
+3. installs the dependencies declared in `vcpkg.json`;
+4. configures the `windows-vcpkg` CMake preset;
+5. builds the Release configuration;
+6. deploys only the required Qt runtime;
+7. creates the production folder and ZIP archive.
+
+Build output:
+
+```text
+release/
+|-- DewralMapEditor-windows-x64/
+|   |-- DME.exe
+|   |-- data/
+|   |-- qml/
+|   |-- LICENSE
+|   |-- NOTICE
+|   |-- README.md
+|   `-- required Qt runtime files
+`-- DewralMapEditor-windows-x64.zip
+```
+
+Local custom profiles and client binaries are removed from the release
+package automatically.
+
+### Build from PowerShell
+
+The batch file is only a convenient launcher. The same build can be started
+directly:
+
+```powershell
+.\scripts\build-release.ps1
+```
+
+After vcpkg has been bootstrapped, the underlying commands are:
+
+```powershell
+$env:VCPKG_ROOT = "$PWD\.tools\vcpkg"
+cmake --preset windows-vcpkg
+cmake --build --preset windows-release
+```
+
+### Build with an existing Qt installation
+
+Developers who already have a compatible Qt 6 SDK may use it directly:
+
+```powershell
+cmake -S . -B build/local-release -G Ninja `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/mingw_64
+
+cmake --build build/local-release --target package_release --parallel
+```
+
+Use a compiler matching the selected Qt SDK. For example, a MinGW Qt package
+must be built with the corresponding MinGW toolchain.
+
+## Dependencies
+
+The vcpkg manifest pins its registry baseline for repeatable dependency
+resolution and installs:
+
+- `qtbase`
+- `qtdeclarative`
+- `qtsvg`
+
+The `qtbase` feature set is limited to the GUI, network, OpenGL, PNG and
+deployment components used by DME. The pinned port set provides Qt 6.10.2.
+
+The official Windows preset uses the release-only `x64-windows-release`
+triplet to avoid compiling and storing an unused Debug copy of Qt. It targets
+Visual Studio 2022. vcpkg manifest mode is activated through the CMake
+toolchain specified in `CMakePresets.json`.
+
+## Useful controls
+
+| Action | Control |
+|---|---|
+| Toggle draw/select mode | `Space` |
+| Change floor | `+` / `-` or `Ctrl` + mouse wheel |
+| Zoom | Mouse wheel |
+| Pan | Middle mouse button or arrow keys |
+| Fast keyboard pan | `Shift` + arrow keys |
+| Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Copy / cut / paste | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` |
+| Rotate doodad variant | `R` |
+| Go to position | `Ctrl+G` |
+| Exit in-game preview | `Esc` |
+
+While dragging an item, changing floors keeps the item attached to the cursor
+and drops it on the active floor.
 
 ## Project structure
 
-```
+```text
 DewralMapEditor/
-├── CMakeLists.txt          root build: OTFormats lib + DME executable
-│
-├── libs/otformats/         OTFormats — static library, pure file-format parsers
-│   ├── sprreader.*           .spr  sprite pixels
-│   ├── datreader.*           .dat  item metadata (size, layers, light, flags)
-│   ├── otbreader.*           .otb  server-id ↔ client-id mapping
-│   ├── otbmreader.*          .otbm map (tiles, items, houses, spawns, towns)
-│   ├── otfireader.*          .otfi format-autodetection override
-│   ├── nodefilereader.*      OTBM node-tree binary framing
-│   └── binaryreader.*        low-level little-endian reader
-│                           No UI deps — only Qt6::Core / Gui (QImage) / Qml.
-│
-├── editor/                 the application
-│   ├── main.cpp              entry point; registers QML types + context props
-│   ├── core/                editor domain logic (no UI):
-│   │   ├── brushstore.*        ground-brush engine + auto-border algorithm
-│   │   ├── tilesetstore.*      palette tilesets (data/<ver>/tilesets.json)
-│   │   ├── palettefilter.*     proxy model filtering the item palette
-│   │   ├── creaturestore.*     creature/NPC palette (RME creatures.xml)
-│   │   ├── documentmanager.*   open-map tabs (one OtbmReader per map)
-│   │   ├── filetools.*         small file/clipboard helpers for QML
-│   │   └── uitheme.*           UI colour theme (multiply tint over textures)
-│   │
-│   ├── map/                 map view — one controller class, split by concern:
-│   │   ├── mapview.h/.cpp      MapView (QQuickItem): setup, load, view centering
-│   │   ├── mapview_edit.cpp      painting, brushes, borders, undo/redo
-│   │   ├── mapview_atlas.cpp     incremental CPU sprite atlas
-│   │   ├── mapview_chunks.cpp    floor/chunk index, quad cache, worker
-│   │   ├── mapview_gl.cpp        data API consumed by the GL renderer
-│   │   ├── mapview_input.cpp     mouse / keyboard / zoom / selection
-│   │   ├── mapview_p.h           shared private helpers
-│   │   └── mapglview.*         MapGLView (QQuickFramebufferObject, GL renderer)
-│   │
-│   ├── qml/                 UI (declarative):
-│   │   ├── Main.qml            window, menus, toolbar, map area, tabs
-│   │   ├── PalettePanel.qml    left palette (categories, tilesets, search)
-│   │   ├── StartupWindow.qml   startup loader (recent maps, client folders)
-│   │   ├── style/             reusable classic-UI controls (buttons, combos…)
-│   │   └── dialogs/           Towns, Go To, Map Properties/Stats, Item props…
-│   │
-│   ├── ui/                  classic-Tibia UI textures (9-slice borders, icons)
-│   └── resources.qrc        Qt resource bundle (QML + textures)
-│
-└── data/<version>/         per-client-version data, converted from RME:
-    ├── brushes.json           ground brushes + border definitions
-    ├── tilesets.json          palette tileset contents
-    ├── creatures.xml          creature list (RME format)
-    └── creature_palette.xml   creature palette layout
+|-- CMakeLists.txt             application and package targets
+|-- CMakePresets.json          shareable Windows/vcpkg presets
+|-- vcpkg.json                 pinned C++ dependency manifest
+|-- build-release.bat          double-click release build
+|-- scripts/
+|   `-- build-release.ps1      validated command-line build
+|-- cmake/                     Qt deployment and release packaging
+|-- data/                      built-in brushes and palette definitions
+|-- editor/
+|   |-- core/                  application services and models
+|   |-- map/                   editing, input, chunk cache, and renderer bridge
+|   |-- qml/                   windows, components, controllers, and dialogs
+|   `-- ui/                    bundled UI textures and icons
+|-- libs/
+|   `-- otformats/             DAT, SPR, OTB, OTFI, and OTBM readers
+`-- docs/
+    `-- screenshots/           README images supplied by the maintainer
 ```
 
-**Data flow (map → pixels):**
+## Troubleshooting
 
-```
-OtbmTile.items[].server_id
-    → OtbReader   (server-id → client-id)
-    → DatReader   (sprite ids, size, layers, light, offsets)
-    → SprReader   (pixels)
-    → CPU sprite atlas  (mapview_atlas)
-    → GL instances      (mapview_gl → MapGLView)
-```
+### Visual Studio C++ tools were not found
 
----
+Open Visual Studio Installer, modify Visual Studio or Build Tools 2022, and
+enable **Desktop development with C++**.
 
-## Building
+### CMake cannot find the vcpkg toolchain
 
-**Requirements:** Qt 6 (Core, Gui, Qml, Quick, OpenGL), CMake 3.16+, a C++17
-compiler (developed with MinGW 13 on Windows).
+Use `build-release.bat`, or set `VCPKG_ROOT` before configuring:
 
-```sh
-cmake -B build -S . -G Ninja
-cmake --build build
+```powershell
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"
+cmake --preset windows-vcpkg
 ```
 
-The `data/` directory (per-client-version brush and tileset definitions) is
-copied next to the executable after every build. The resulting binary is
-`build/DME.exe`.
+### The first build appears to be stuck
 
-## Running
+Qt is being compiled by vcpkg. The first build is substantially slower than
+normal DME rebuilds. Check CPU and disk activity before stopping it.
 
-DME needs a Tibia client version's asset files, which are **not** shipped:
+### Windows shows an old or missing application icon
 
-- `Tibia.spr`, `Tibia.dat` — the client sprites and item metadata
-- `items.otb` — the server↔client item-id map
+Windows may cache executable icons. Refresh Explorer, rename the extracted
+folder, or clear the Windows icon cache. The release executable contains a
+native multi-size Windows icon.
 
-On first launch the startup window asks you to point at the folder containing
-these files for the detected client version. Paths are remembered per version.
+## Data and credits
 
----
+- DME is inspired by
+  [Remere's Map Editor](https://github.com/hampusborgos/rme).
+- Portions of the binary-format I/O implementation are derived from
+  [Tibia ImGui Map Editor](https://github.com/Open-Tibia-Tools/tibia-imgui-map-editor),
+  which is licensed under the GNU Affero General Public License v3.0.
+- Lighting and in-game visualization ideas were also informed by Tibia ImGui
+  Map Editor.
+- Some brush, border, tileset, and creature definitions are derived from
+  OpenTibia/RME-compatible data.
+- Tibia is a trademark of CipSoft GmbH. Client data and artwork are not
+  distributed with DME.
 
-## License / Credits
+## License
 
-- Brush, border, tileset and creature **data** derive from
-  **Remere's Map Editor** (GPL). RME's `GroundBrush::doBorders` and its border
-  lookup tables were ported to `editor/core/brushstore.cpp`.
-- The lighting/night preview is modelled on the
-  [TIME](https://github.com/Open-Tibia-Tools/tibia-imgui-map-editor) editor.
-- **Tibia**, the `.spr`/`.dat` client formats and all client artwork are
-  © CipSoft GmbH. This project ships none of that content.
+Dewral Map Editor is free software licensed under the
+[GNU Affero General Public License v3.0](LICENSE). See [NOTICE](NOTICE) for
+third-party attribution.
+
+Release binaries must be accompanied by access to the complete corresponding
+source code for the same version. Tibia client files and artwork are not part
+of this project and are not covered by this license.

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "dewral-map-editor",
+  "version-string": "dev",
+  "description": "A Qt 6 and OpenGL map editor for OpenTibia OTBM maps.",
+  "homepage": "https://github.com/dewral/DewralMapEditor",
+  "builtin-baseline": "c3867e714dd3a51c272826eea77267876517ed99",
+  "dependencies": [
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "gui",
+        "network",
+        "opengl",
+        "png",
+        "windeployqt"
+      ]
+    },
+    "qtdeclarative",
+    "qtsvg"
+  ]
+}

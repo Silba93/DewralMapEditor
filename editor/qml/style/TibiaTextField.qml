@@ -12,9 +12,11 @@ Item {
 
     implicitWidth: 140
     implicitHeight: 22
+    readonly property bool githubUi: Backend.uiTheme.style === "github-dark"
 
     BorderImage {
         anchors.fill: parent
+        visible: !root.githubUi
         source: (Backend.uiTheme.tex + "textedit.png")
         smooth: false
         border {
@@ -25,6 +27,17 @@ Item {
         }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        visible: root.githubUi
+        radius: 6
+        color: "#0D1117"
+        border {
+            width: 1
+            color: input.activeFocus ? "#2EA043" : "#30363D"
+        }
+    }
+
     Text {
         id: placeholder
         anchors {
@@ -32,7 +45,7 @@ Item {
             leftMargin: 6
             verticalCenter: parent.verticalCenter
         }
-        color: "#777"
+        color: Backend.uiTheme.style === "github-dark" ? "#7D8590" : "#777"
         font.pixelSize: 12
         visible: input.text.length === 0
     }
@@ -43,7 +56,7 @@ Item {
         anchors.leftMargin: 6
         anchors.rightMargin: 6
         verticalAlignment: TextInput.AlignVCenter
-        color: "#c0c0c0"
+        color: Backend.uiTheme.style === "github-dark" ? "#C9D1D9" : "#c0c0c0"
         font.pixelSize: 12
         clip: true
         selectByMouse: true

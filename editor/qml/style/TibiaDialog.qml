@@ -1,3 +1,4 @@
+import Tibia 1.0
 import QtQuick
 import QtQuick.Controls
 
@@ -5,25 +6,39 @@ Dialog {
     id: root
 
     modal: true
+    dim: Backend.uiTheme.style === "github-dark"
     anchors.centerIn: Overlay.overlay
     closePolicy: Popup.CloseOnEscape
-    padding: 12
+    padding: Backend.uiTheme.style === "github-dark" ? 16 : 12
 
     background: TibiaDialogBackground {}
 
     header: Item {
         visible: root.title.length > 0
-        implicitHeight: visible ? 28 : 0
+        implicitHeight: visible ? (Backend.uiTheme.style === "github-dark" ? 38 : 28) : 0
+
+        Rectangle {
+            visible: Backend.uiTheme.style === "github-dark"
+            anchors {
+                left: parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            height: 1
+            color: "#30363D"
+        }
 
         Text {
-            anchors {
-                horizontalCenter: parent.horizontalCenter
-                verticalCenter: parent.verticalCenter
-            }
+            anchors.verticalCenter: parent.verticalCenter
+            x: Backend.uiTheme.style === "github-dark" ? 16 : (parent.width - width) / 2
             text: root.title
-            color: "#c0c0c0"
+            color: Backend.uiTheme.style === "github-dark" ? "#F0F6FC" : "#c0c0c0"
             font.bold: true
-            font.pixelSize: 13
+            font.pixelSize: Backend.uiTheme.style === "github-dark" ? 14 : 13
         }
+    }
+
+    Overlay.modal: Rectangle {
+        color: "#99000000"
     }
 }

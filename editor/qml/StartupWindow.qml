@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Dialogs
 import QtQuick.Controls
+import "dialogs"
 import "style"
 
 Window {
@@ -11,6 +12,19 @@ Window {
     required property var app
 
     required property var settings
+    property bool loadingMap: false
+    property string loadingMapPath: ""
+    property string loadingProfileKey: ""
+
+    function beginLoadMap(path, profileKey) {
+        if (!path || loadingMap)
+            return;
+        loadingMapPath = path;
+        loadingProfileKey = profileKey || "";
+        Backend.otbmReader.reportLoadingProgress(0, "Preparing map...");
+        loadingMap = true;
+        loadDelay.restart();
+    }
 
     function openMapDialog() {
         startMapDialog.open();
@@ -21,12 +35,12 @@ Window {
 
     transientParent: null
     visible: !app.started
-    width: 800
-    height: 520
-    minimumWidth: 800
-    maximumWidth: 800
-    minimumHeight: 520
-    maximumHeight: 520
+    width: loadingMap ? 460 : 800
+    height: loadingMap ? 190 : 520
+    minimumWidth: loadingMap ? 460 : 800
+    maximumWidth: loadingMap ? 460 : 800
+    minimumHeight: loadingMap ? 190 : 520
+    maximumHeight: loadingMap ? 190 : 520
     x: Screen.width / 2 - width / 2
     y: Screen.height / 2 - height / 2
     title: "Dewral Map Editor"
@@ -34,8 +48,20 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.Window
     color: "transparent"
 
+    Timer {
+        id: loadDelay
+        interval: 80
+        repeat: false
+        onTriggered: {
+            startupScreen.app.loadEverything(startupScreen.loadingMapPath,
+                                             startupScreen.loadingProfileKey);
+            startupScreen.loadingMap = false;
+        }
+    }
+
     TibiaDialogBackground {
         id: card
+        visible: !startupScreen.loadingMap
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 760)
         height: Math.min(parent.height - 80, 440)
@@ -52,34 +78,36 @@ Window {
             Text {
                 anchors.centerIn: parent
                 text: startupScreen.title
-                color: "#c0c0c0"
+                color: Backend.uiTheme.style === "github-dark" ? "#F0F6FC" : "#c0c0c0"
                 font.bold: true
                 font.pixelSize: 13
             }
 
-            Text {
+            Row {
                 anchors {
                     right: parent.right
-                    rightMargin: 8
-                    verticalCenter: parent.verticalCenter
+                    top: parent.top
+                    bottom: parent.bottom
                 }
-                text: "X"
-                color: closeArea.containsMouse ? "#eaffea" : "#999"
-                font.pixelSize: 13
-                font.bold: true
-                MouseArea {
-                    id: closeArea
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.quit()
+
+                GithubWindowButton {
+                    height: parent.height
+                    compact: true
+                    controlType: "minimize"
+                    onTriggered: startupScreen.showMinimized()
+                }
+
+                GithubWindowButton {
+                    height: parent.height
+                    compact: true
+                    controlType: "close"
+                    onTriggered: Qt.quit()
                 }
             }
 
             MouseArea {
                 anchors.fill: parent
-                anchors.rightMargin: 20
+                anchors.rightMargin: 76
                 onPressed: startupScreen.startSystemMove()
             }
         }
@@ -102,14 +130,14 @@ Window {
                         spacing: 4
                         Text {
                             text: "Dewral Map Editor"
-                            color: "#f0f0f0"
+                            color: "#F0F6FC"
                             font.pixelSize: 22
                             font.bold: true
                         }
                         Rectangle {
                             width: 180
                             height: 2
-                            color: "#4a90e2"
+                            color: Backend.uiTheme.style === "github-dark" ? "#2EA043" : "#4a90e2"
                         }
                     }
                     Text {
@@ -123,26 +151,22 @@ Window {
                         height: 8
                     }
 
-                    Rectangle {
-                        width: 232
-                        height: 40
-                        radius: 3
-                        color: omAcc.pressed ? "#1f5f3f" : (omAcc.containsMouse ? "#36805a" : "#2f6f4f")
-                        border.color: "#7fdc8f"
-                        border.width: 1
-                        Text {
-                            anchors.centerIn: parent
+                    Row {
+                        spacing: 6
+
+                        TibiaButton {
+                            width: 113
+                            height: 40
                             text: "Open map..."
-                            color: "#eaffea"
-                            font.pixelSize: 14
-                            font.bold: true
-                        }
-                        MouseArea {
-                            id: omAcc
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
+                            variant: "primary"
                             onClicked: startMapDialog.open()
+                        }
+
+                        TibiaButton {
+                            width: 113
+                            height: 40
+                            text: "New map..."
+                            onClicked: startupNewMapDialog.open()
                         }
                     }
 
@@ -297,8 +321,11 @@ Window {
 
                             Rectangle {
                                 anchors.fill: parent
-                                color: rma.pressed ? "#14ffffff" : (rma.containsMouse ? "#0affffff" : "transparent")
-                                border.color: "#555"
+                                radius: Backend.uiTheme.style === "github-dark" ? 5 : 0
+                                color: Backend.uiTheme.style === "github-dark"
+                                       ? (rma.pressed ? "#21262D" : (rma.containsMouse ? "#161E27" : "#0D1117"))
+                                       : (rma.pressed ? "#14ffffff" : (rma.containsMouse ? "#0affffff" : "transparent"))
+                                border.color: Backend.uiTheme.style === "github-dark" ? "#30363D" : "#555"
                                 border.width: 1
                             }
 
@@ -333,12 +360,90 @@ Window {
                                 onClicked: {
                                     if (!Backend.fileTools.exists(modelData))
                                         return;
-                                    app.loadEverything(modelData, verCombo.selKey);
+                                    startupScreen.beginLoadMap(modelData, verCombo.selKey);
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    TibiaDialogBackground {
+        id: loadingCard
+        visible: startupScreen.loadingMap
+        anchors.centerIn: parent
+        width: 420
+        height: 142
+
+        Column {
+            anchors {
+                fill: parent
+                margins: 24
+            }
+            spacing: 10
+
+            Text {
+                text: "Loading map"
+                color: "#F0F6FC"
+                font.pixelSize: 15
+                font.weight: Font.DemiBold
+            }
+
+            Item {
+                width: parent.width
+                height: 18
+
+                Text {
+                    anchors {
+                        left: parent.left
+                        right: progressPercent.left
+                        rightMargin: 12
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: Backend.fileTools.fileName(startupScreen.loadingMapPath)
+                    color: "#C9D1D9"
+                    font.pixelSize: 13
+                    elide: Text.ElideMiddle
+                }
+
+                Text {
+                    id: progressPercent
+                    anchors {
+                        right: parent.right
+                        verticalCenter: parent.verticalCenter
+                    }
+                    text: Backend.otbmReader.loadingProgress + "%"
+                    color: "#56D364"
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                }
+            }
+
+            Rectangle {
+                id: progressTrack
+                width: parent.width
+                height: 7
+                radius: 4
+                color: "#21262D"
+                clip: true
+
+                Rectangle {
+                    id: progressChunk
+                    width: progressTrack.width * Backend.otbmReader.loadingProgress / 100
+                    height: parent.height
+                    radius: 4
+                    color: "#2EA043"
+                }
+            }
+
+            Text {
+                text: Backend.otbmReader.loadingStage.length > 0
+                      ? Backend.otbmReader.loadingStage
+                      : "Preparing map..."
+                color: "#7D8590"
+                font.pixelSize: 11
             }
         }
     }
@@ -353,6 +458,13 @@ Window {
         id: startMapDialog
         title: "Open .otbm map"
         nameFilters: ["OTBM maps (*.otbm)", "All files (*)"]
-        onAccepted: app.loadEverything(Backend.fileTools.toLocalFile(selectedFile), verCombo.selKey)
+        onAccepted: startupScreen.beginLoadMap(Backend.fileTools.toLocalFile(selectedFile),
+                                               verCombo.selKey)
+    }
+
+    NewMapDialog {
+        id: startupNewMapDialog
+        app: startupScreen.app
+        preferredProfileKey: verCombo.selKey
     }
 }

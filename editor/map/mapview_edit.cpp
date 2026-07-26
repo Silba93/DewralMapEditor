@@ -91,8 +91,9 @@ void MapView::flushEditedChunksLocked()
     if (m_pendingChunkRecompute.empty()) return;
     for (const auto &zc : m_pendingChunkRecompute) {
         std::vector<QuadRef> quads;
-        collectFloorChunkQuads(zc.first, zc.second, quads);
-        storeChunkQuads(zc.first, zc.second, std::move(quads));
+        bool animated = false;
+        collectFloorChunkQuads(zc.first, zc.second, quads, &animated);
+        storeChunkQuads(zc.first, zc.second, std::move(quads), animated);
         m_dirtyFloorChunks[zc.first].insert(zc.second);
     }
     m_pendingChunkRecompute.clear();
@@ -1169,9 +1170,9 @@ void MapView::cutSelection()
     if (any) refreshAfterEdit(0);
 }
 
-void MapView::moveSelection(int dx, int dy)
+void MapView::moveSelection(int dx, int dy, int dz)
 {
-    if (!m_otbm || m_selected.isEmpty() || (dx == 0 && dy == 0)) return;
+    if (!m_otbm || m_selected.isEmpty() || (dx == 0 && dy == 0 && dz == 0)) return;
 
     struct Snap {
         int x, y, z;
@@ -1205,6 +1206,14 @@ void MapView::moveSelection(int dx, int dy)
         snap.push_back(std::move(s));
     }
     if (snap.empty()) return;
+    for (const Snap &s : snap) {
+        const int targetX = s.x + dx;
+        const int targetY = s.y + dy;
+        const int targetZ = s.z + dz;
+        if (targetX < 0 || targetX > 65535
+            || targetY < 0 || targetY > 65535
+            || targetZ < 0 || targetZ > 15) return;
+    }
 
     std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
     beginEditBatch();
@@ -1224,17 +1233,18 @@ void MapView::moveSelection(int dx, int dy)
     QSet<quint64> newSel;
     for (const Snap &s : snap) {
         const int nx = s.x + dx, ny = s.y + dy;
+        const int nz = s.z + dz;
 
-        for (const OtbmMapItem &it : s.items) placeItemOnFloor(nx, ny, s.z, it);
+        for (const OtbmMapItem &it : s.items) placeItemOnFloor(nx, ny, nz, it);
         if (!s.creature.isEmpty()) {
-            m_otbm->setCreatureAt(nx, ny, s.z, s.creature, s.spawntime, s.npc);
-            onTileEdited(nx, ny, s.z);
+            m_otbm->setCreatureAt(nx, ny, nz, s.creature, s.spawntime, s.npc);
+            onTileEdited(nx, ny, nz);
         }
         if (s.spawnRadius > 0) {
-            m_otbm->setSpawnAt(nx, ny, s.z, s.spawnRadius);
-            onTileEdited(nx, ny, s.z);
+            m_otbm->setSpawnAt(nx, ny, nz, s.spawnRadius);
+            onTileEdited(nx, ny, nz);
         }
-        newSel.insert(selKey(nx, ny, s.z));
+        newSel.insert(selKey(nx, ny, nz));
     }
     if (movedSpawn) m_spawnIndex.invalidate();
 

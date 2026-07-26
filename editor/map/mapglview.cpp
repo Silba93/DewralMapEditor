@@ -6,6 +6,7 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLFramebufferObject>
+#include <QOpenGLContext>
 #include <QQuickWindow>
 #include <QMatrix4x4>
 #include <QImage>
@@ -15,6 +16,10 @@
 #include <limits>
 #include <unordered_map>
 #include <memory>
+
+#ifdef Q_OS_WIN
+#include <QtCore/qt_windows.h>
+#endif
 
 namespace {
 
@@ -32,12 +37,14 @@ public:
         m_cursorVbo.destroy();
         m_spawnVbo.destroy();
         m_spawnSelVbo.destroy();
+        m_wallOutlineVbo.destroy();
         if (m_tex) glDeleteTextures(1, &m_tex);
         if (m_lightTexId) glDeleteTextures(1, &m_lightTexId);
         m_quadVbo.destroy();
         for (auto &floor : m_chunkBufs)
             for (auto &kv : floor) kv.second->vbo.destroy();
         m_fxVbo.destroy();
+        m_previewPlayerVbo.destroy();
         m_selVbo.destroy();
         m_ghostVbo.destroy();
         m_borderVbo.destroy();
@@ -57,6 +64,7 @@ public:
     {
         auto *view = static_cast<MapGLView *>(item);
         m_view = view;
+        m_vsyncEnabled = view->vsyncEnabled();
         MapView *src = view->source();
         if (!src) { for (auto &l : m_drawList) l.clear(); return; }
 
@@ -107,10 +115,24 @@ public:
         const int wMin = m_curFloor;
         const int wMax = m_botFloor;
 
-        std::vector<float> tmp;
-        for (int f = 0; f < 16; ++f) m_drawList[f].clear();
+        // Petle chunkow POMIJAMY, gdy nic sie nie zmienilo od poprzedniej klatki:
+        // przy duzym zoom-out to setki chunkow x pietra (kazdy = lock mutexa +
+        // hash-lookupy) per klatka, a hover/kursor pedzla generuje klatki bez
+        // zadnej zmiany mapy. Kazda inwalidacja cache quadow bumpuje
+        // glQuadCacheVersion (store/animTick/clear), wiec wersja + zakres +
+        // pietra + LOD w pelni opisuja wejscie petli. m_lastAnyPending wymusza
+        // przebieg, dopoki worker nie dostarczy wszystkich zaleglych chunkow.
+        const bool viewMoved = minCX != m_lastMinCX || minCY != m_lastMinCY
+                            || maxCX != m_lastMaxCX || maxCY != m_lastMaxCY;
+        const int quadVer = src->glQuadCacheVersion();
+        const bool chunksDirty = viewMoved || quadVer != m_lastQuadVer
+                              || wMin != m_lastWMin || wMax != m_lastWMax
+                              || groundOnly != m_lastGroundOnly || m_lastAnyPending;
 
         bool anyPending = false;
+        if (chunksDirty) {
+        std::vector<float> tmp;
+        for (int f = 0; f < 16; ++f) m_drawList[f].clear();
 
         for (int z = wMin; z <= wMax; ++z) {
             auto &bufs = m_chunkBufs[z];
@@ -147,8 +169,6 @@ public:
                 }
         }
 
-        const bool viewMoved = minCX != m_lastMinCX || minCY != m_lastMinCY
-                            || maxCX != m_lastMaxCX || maxCY != m_lastMaxCY;
         if (viewMoved) {
             const int m = 8;
             for (auto &bufs : m_chunkBufs) {
@@ -164,6 +184,12 @@ public:
             m_lastMinCX = minCX; m_lastMinCY = minCY; m_lastMaxCX = maxCX; m_lastMaxCY = maxCY;
         }
 
+        m_lastQuadVer = quadVer;
+        m_lastWMin = wMin; m_lastWMax = wMax;
+        m_lastGroundOnly = groundOnly;
+        m_lastAnyPending = anyPending;
+        }   // chunksDirty
+
         auto uploadDyn = [&](QOpenGLBuffer &vbo, const std::vector<float> &data, int &count) {
             count = static_cast<int>(data.size() / 4);
             if (count > 0) {
@@ -174,6 +200,8 @@ public:
             }
         };
         src->glCollectEffectInstances(m_fxInst);          uploadDyn(m_fxVbo, m_fxInst, m_fxCount);
+        src->glCollectPreviewPlayerInstances(m_previewPlayerInst);
+        uploadDyn(m_previewPlayerVbo, m_previewPlayerInst, m_previewPlayerCount);
 
         src->glCollectGhostInstances(m_ghostInst);        uploadDyn(m_ghostVbo, m_ghostInst, m_ghostCount);
 
@@ -181,7 +209,7 @@ public:
         m_rubberActive = src->glRubberBandRect(rx0, ry0, rx1, ry1);
         if (m_rubberActive) { m_rubberRect[0]=rx0; m_rubberRect[1]=ry0; m_rubberRect[2]=rx1; m_rubberRect[3]=ry1; }
 
-        src->glCollectBrushCursorInstances(m_cursorInst);
+        src->glCollectBrushCursorInstances(m_cursorInst, m_cursorBorderInst);
         m_cursorCount = static_cast<int>(m_cursorInst.size() / 4);
         if (m_cursorCount > 0) {
             if (!m_cursorVbo.isCreated()) m_cursorVbo.create();
@@ -190,6 +218,7 @@ public:
                                  static_cast<int>(m_cursorInst.size() * sizeof(float)));
             m_cursorVbo.release();
         }
+        uploadDyn(m_cursorBorderVbo, m_cursorBorderInst, m_cursorBorderCount);
 
         {
             const quint32 lv = src->glUpdateLightGrid();
@@ -221,9 +250,17 @@ public:
             src->glCollectGridInstances(m_gridInst);
             uploadDyn(m_gridVbo, m_gridInst, m_gridCount);
 
-            src->glCollectZoneMarkInstances(m_zoneHouseInst, m_zoneFlagInst);
+            src->glCollectWallOutlineInstances(m_wallOutlineInst);
+            uploadDyn(m_wallOutlineVbo, m_wallOutlineInst, m_wallOutlineCount);
+
+            src->glCollectZoneMarkInstances(m_zoneHouseInst, m_zonePzInst,
+                                            m_zoneNoPvpInst, m_zoneNoLogoutInst,
+                                            m_zonePvpInst);
             uploadDyn(m_zoneHouseVbo, m_zoneHouseInst, m_zoneHouseCount);
-            uploadDyn(m_zoneFlagVbo, m_zoneFlagInst, m_zoneFlagCount);
+            uploadDyn(m_zonePzVbo, m_zonePzInst, m_zonePzCount);
+            uploadDyn(m_zoneNoPvpVbo, m_zoneNoPvpInst, m_zoneNoPvpCount);
+            uploadDyn(m_zoneNoLogoutVbo, m_zoneNoLogoutInst, m_zoneNoLogoutCount);
+            uploadDyn(m_zonePvpVbo, m_zonePvpInst, m_zonePvpCount);
 
             src->glCollectSpawnMarkInstances(m_spawnInst, m_spawnSelInst);
             uploadDyn(m_spawnVbo, m_spawnInst, m_spawnCount);
@@ -232,12 +269,16 @@ public:
 
         if (anyPending) {
             view->markFramePending();
-            if (view->maxFps() <= 0) update();
+            if (view->maxFps() <= 0) {
+                view->markMapFrameRequested();
+                update();
+            }
         }
     }
 
     void render() override
     {
+        applySwapInterval();
         if (m_view) m_view->countFrame();
         glViewport(0, 0, m_fbo.width(), m_fbo.height());
         glDisable(GL_DEPTH_TEST);
@@ -339,6 +380,8 @@ public:
             }
         }
 
+        drawOverlay(m_previewPlayerVbo, m_previewPlayerCount);
+
         if (m_lightTW > 0 && m_lightProg && m_lightProg->isLinked()) {
             if (m_lightUpload) {
                 m_lightUpload = false;
@@ -436,10 +479,20 @@ public:
             m_cursorProg->release();
         };
 
-        drawSpawnMarks(m_zoneHouseVbo, m_zoneHouseCount, QVector4D(0.25f, 0.35f, 0.9f, 0.26f));
-        drawSpawnMarks(m_zoneFlagVbo, m_zoneFlagCount, QVector4D(0.2f, 0.75f, 0.3f, 0.20f));
+        drawSpawnMarks(m_zoneHouseVbo, m_zoneHouseCount,
+                       QVector4D(0.35f, 0.55f, 1.0f, 0.24f));
+        drawSpawnMarks(m_zonePzVbo, m_zonePzCount,
+                       QVector4D(0.38f, 1.0f, 0.48f, 0.34f));
+        drawSpawnMarks(m_zoneNoPvpVbo, m_zoneNoPvpCount,
+                       QVector4D(0.86f, 0.38f, 0.78f, 0.24f));
+        drawSpawnMarks(m_zoneNoLogoutVbo, m_zoneNoLogoutCount,
+                       QVector4D(0.95f, 0.82f, 0.30f, 0.24f));
+        drawSpawnMarks(m_zonePvpVbo, m_zonePvpCount,
+                       QVector4D(0.95f, 0.43f, 0.25f, 0.24f));
 
         drawSpawnMarks(m_gridVbo, m_gridCount, QVector4D(0.0f, 0.0f, 0.0f, 0.35f));
+        drawSpawnMarks(m_wallOutlineVbo, m_wallOutlineCount,
+                       QVector4D(1.0f, 0.92f, 0.0f, 1.0f));
         drawSpawnMarks(m_spawnVbo, m_spawnCount, QVector4D(0.72f, 0.35f, 0.86f, 0.45f));
         drawSpawnMarks(m_spawnSelVbo, m_spawnSelCount, QVector4D(0.36f, 0.17f, 0.43f, 0.6f));
 
@@ -448,8 +501,7 @@ public:
             m_cursorProg->setUniformValue("uMatrix", m_matrix);
 
             m_cursorProg->setUniformValue("uColor", QVector4D(0.6f, 0.6f, 0.6f, 0.18f));
-            m_cursorProg->setUniformValue("uBorderColor", QVector4D(0.8f, 0.8f, 0.8f, 0.75f));
-            m_cursorProg->setUniformValue("uBorder", 1.0f);
+            m_cursorProg->setUniformValue("uBorder", 0.0f);
             m_vao.bind();
 
             glDisableVertexAttribArray(2);
@@ -463,10 +515,31 @@ public:
             m_cursorProg->release();
         }
 
+        drawSpawnMarks(m_cursorBorderVbo, m_cursorBorderCount,
+                       QVector4D(0.82f, 0.82f, 0.82f, 0.82f));
+
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
 
 private:
+    void applySwapInterval()
+    {
+        const int interval = m_vsyncEnabled ? 1 : 0;
+        if (m_appliedSwapInterval == interval) return;
+
+#ifdef Q_OS_WIN
+        QOpenGLContext *context = QOpenGLContext::currentContext();
+        if (!context) return;
+
+        using SwapIntervalProc = BOOL (WINAPI *)(int);
+        auto swapInterval = reinterpret_cast<SwapIntervalProc>(
+            context->getProcAddress(QByteArrayLiteral("wglSwapIntervalEXT")));
+        if (!swapInterval || !swapInterval(interval)) return;
+#endif
+
+        m_appliedSwapInterval = interval;
+    }
+
     void initGL()
     {
         m_prog = new QOpenGLShaderProgram;
@@ -501,24 +574,27 @@ private:
             uniform sampler2D uAtlas;
             uniform vec4 uTint;
 
-            vec3 zoneTint(float zf) {
+            vec3 applyZoneOverlay(vec3 base, float zf) {
                 int f = int(zf + 0.5);
-                vec3 c = vec3(1.0);
-
-                if ((f & 64) != 0)     { c.r *= 0.5;  c.g *= 0.5; }
-                else if ((f & 1) != 0) { c.r *= 0.5;  c.b *= 0.5; }
-
-                if ((f & 16) != 0) { c.r *= 0.66; c.b *= 0.66; }
-                if ((f & 8) != 0)  { c.b *= 0.5; }
-                if ((f & 4) != 0)  { c.g *= 0.5; }
-                return c;
+                if ((f & 64) != 0)
+                    return mix(base, vec3(0.30, 0.52, 1.0), 0.30);
+                if ((f & 1) != 0)
+                    return mix(base, vec3(0.22, 1.0, 0.34), 0.44);
+                if ((f & 4) != 0)
+                    return mix(base, vec3(0.94, 0.30, 0.84), 0.36);
+                if ((f & 8) != 0)
+                    return mix(base, vec3(1.0, 0.84, 0.24), 0.38);
+                if ((f & 16) != 0)
+                    return mix(base, vec3(1.0, 0.30, 0.16), 0.38);
+                return base;
             }
             void main() {
                 vec4 c = texture(uAtlas, vUV);
                 if (c.a < 0.01) discard;
 
                 float sf = (vSel > 0.5) ? 0.5 : 1.0;
-                FragColor = vec4(c.rgb * uTint.rgb * sf * zoneTint(vZone), c.a * uTint.a);
+                vec3 base = c.rgb * uTint.rgb * sf;
+                FragColor = vec4(applyZoneOverlay(base, vZone), c.a * uTint.a);
             }
         )");
         m_prog->bindAttributeLocation("aCorner", 0);
@@ -690,6 +766,12 @@ private:
     std::unordered_map<quint64, std::unique_ptr<ChunkBuf>> m_chunkBufs[16];
     std::vector<quint64> m_drawList[16];
     int m_lastMinCX = 1, m_lastMinCY = 1, m_lastMaxCX = 0, m_lastMaxCY = 0;
+    // Stan wejscia petli chunkow z poprzedniego sync - gdy identyczny, petla
+    // jest pomijana (patrz chunksDirty w synchronize()).
+    int m_lastQuadVer = -1;
+    int m_lastWMin = -1, m_lastWMax = -1;
+    bool m_lastGroundOnly = false;
+    bool m_lastAnyPending = true;   // pierwszy sync zawsze buduje
     quint64 m_overlayContentVersion = std::numeric_limits<quint64>::max();
     int m_overlayX = 0, m_overlayY = 0, m_overlayFloor = -1;
     int m_overlayTileSize = -1, m_overlayWidth = -1, m_overlayHeight = -1;
@@ -697,6 +779,9 @@ private:
     QOpenGLBuffer m_fxVbo;
     std::vector<float> m_fxInst;
     int m_fxCount = 0;
+    QOpenGLBuffer m_previewPlayerVbo;
+    std::vector<float> m_previewPlayerInst;
+    int m_previewPlayerCount = 0;
     QOpenGLBuffer m_selVbo;
     std::vector<float> m_selInst;
     int m_selCount = 0;
@@ -708,6 +793,9 @@ private:
     QOpenGLBuffer m_cursorVbo;
     std::vector<float> m_cursorInst;
     int m_cursorCount = 0;
+    QOpenGLBuffer m_cursorBorderVbo;
+    std::vector<float> m_cursorBorderInst;
+    int m_cursorBorderCount = 0;
     QOpenGLBuffer m_spawnVbo;
     std::vector<float> m_spawnInst;
     int m_spawnCount = 0;
@@ -717,13 +805,25 @@ private:
     QOpenGLBuffer m_gridVbo;
     std::vector<float> m_gridInst;
     int m_gridCount = 0;
+    QOpenGLBuffer m_wallOutlineVbo;
+    std::vector<float> m_wallOutlineInst;
+    int m_wallOutlineCount = 0;
 
     QOpenGLBuffer m_zoneHouseVbo;
     std::vector<float> m_zoneHouseInst;
     int m_zoneHouseCount = 0;
-    QOpenGLBuffer m_zoneFlagVbo;
-    std::vector<float> m_zoneFlagInst;
-    int m_zoneFlagCount = 0;
+    QOpenGLBuffer m_zonePzVbo;
+    std::vector<float> m_zonePzInst;
+    int m_zonePzCount = 0;
+    QOpenGLBuffer m_zoneNoPvpVbo;
+    std::vector<float> m_zoneNoPvpInst;
+    int m_zoneNoPvpCount = 0;
+    QOpenGLBuffer m_zoneNoLogoutVbo;
+    std::vector<float> m_zoneNoLogoutInst;
+    int m_zoneNoLogoutCount = 0;
+    QOpenGLBuffer m_zonePvpVbo;
+    std::vector<float> m_zonePvpInst;
+    int m_zonePvpCount = 0;
 
     QOpenGLShaderProgram *m_lightProg = nullptr;
     unsigned int m_lightTexId = 0;
@@ -748,6 +848,8 @@ private:
     int m_curFloor = 7, m_botFloor = 7;
     bool m_useLinear = false;
     bool m_showShade = true;
+    bool m_vsyncEnabled = true;
+    int m_appliedSwapInterval = -1;
 
 public:
     MapGLRenderer(const MapGLRenderer &) = delete;
@@ -760,14 +862,32 @@ MapGLView::MapGLView(QQuickItem *parent)
 {
     m_fpsTimer.setInterval(1000);
     connect(&m_fpsTimer, &QTimer::timeout, this, [this] {
-        m_fps = m_frameCount.exchange(0, std::memory_order_relaxed);
-        emit fpsChanged();
+        const int frames = m_frameCount.exchange(0, std::memory_order_relaxed);
+        const qint64 elapsedMs = m_fpsClock.restart();
+        const int measuredFps = elapsedMs > 0
+            ? qRound(static_cast<double>(frames) * 1000.0 / elapsedMs)
+            : frames;
+        if (m_fps != measuredFps) {
+            m_fps = measuredFps;
+            emit fpsChanged();
+        }
     });
+    m_fpsClock.start();
     m_fpsTimer.start();
 
     m_renderTimer.setTimerType(Qt::PreciseTimer);
-    m_animClock.start();
     connect(&m_renderTimer, &QTimer::timeout, this, [this] { driverTick(); });
+
+    // Krok animacji itemow co 500 ms, poza petla renderowania. animTick emituje
+    // contentUpdated tylko gdy faktycznie zinwalidowal jakies chunki - wtedy
+    // pending/update() zamawia klatke. Statyczna scena z wlaczonymi animacjami
+    // renderuje sie wiec ~2x/s, a nie w kolko co tick drivera.
+    m_animTimer.setInterval(500);
+    connect(&m_animTimer, &QTimer::timeout, this, [this] {
+        if (m_source && m_source->showAnimations() && isVisible())
+            m_source->animTick();
+    });
+    m_animTimer.start();
 }
 
 QQuickFramebufferObject::Renderer *MapGLView::createRenderer() const
@@ -784,24 +904,30 @@ void MapGLView::setSource(MapView *s)
 
         connect(m_source, &MapView::contentUpdated, this, [this] {
             m_framePending.store(true, std::memory_order_relaxed);
-            if (m_maxFps <= 0) update();
+            if (m_maxFps <= 0) {
+                markMapFrameRequested();
+                update();
+            }
         });
     }
     emit sourceChanged();
+    markMapFrameRequested();
     update();
 }
 
 void MapGLView::driverTick()
 {
     if (!isVisible()) return;
-    const bool itemAnims = m_source && m_source->showAnimations();
-    if (itemAnims && m_animClock.elapsed() >= 500) {
-        m_animClock.restart();
-        m_source->animTick();
-    }
-    const bool animating = itemAnims || (m_source && m_source->hasActiveEffects());
+    // Klatke zamawia TYLKO realna zmiana (pending - edycja/scroll/animTick) albo
+    // trwajacy efekt magiczny (animuje sie co klatke, interpolacja w render()).
+    // Same wlaczone animacje itemow NIE wymuszaja renderu - ich krok robi
+    // m_animTimer (500 ms), ktory przez contentUpdated ustawia pending.
+    const bool animating = m_source && m_source->hasActiveEffects();
     const bool pending = m_framePending.exchange(false, std::memory_order_relaxed);
-    if (pending || animating) update();
+    if (pending || animating) {
+        markMapFrameRequested();
+        update();
+    }
 }
 
 void MapGLView::setMaxFps(int v)
@@ -811,6 +937,15 @@ void MapGLView::setMaxFps(int v)
     m_maxFps = v;
     updateRenderDriver();
     emit maxFpsChanged();
+}
+
+void MapGLView::setVsyncEnabled(bool enabled)
+{
+    if (m_vsyncEnabled == enabled) return;
+    m_vsyncEnabled = enabled;
+    emit vsyncEnabledChanged();
+    markMapFrameRequested();
+    update();
 }
 
 void MapGLView::itemChange(ItemChange change, const ItemChangeData &value)

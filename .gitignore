@@ -2,6 +2,10 @@
 /build/
 build*/
 /dist/
+/release/
+/vcpkg_installed/
+/.tools/
+/.cache/
 *.o
 *.obj
 *.a
@@ -14,6 +18,7 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 CMakeLists.txt.user*
+CMakeUserPresets.json
 
 # ---- Qt / IDE ----
 *.user
@@ -35,6 +40,16 @@ Tibia.otfi
 *.spr
 *.dat
 items.otb
+
+# Custom named client profiles are local. Keep only the built-in numeric
+# profile definitions under version control.
+/data/*/
+!/data/760/
+!/data/760/**
+!/data/772/
+!/data/772/**
+!/data/1098/
+!/data/1098/**
 
 # ---- Local test maps / scratch data ----
 *.otbm

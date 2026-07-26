@@ -1,5 +1,7 @@
 #include "otbmreader.h"
 
+#include <QCoreApplication>
+#include <QEventLoop>
 #include "nodefilereader.h"
 
 #include <QBuffer>
@@ -419,19 +421,56 @@ bool OtbmReader::abortLoad(QString message)
     reset();
     setError(message.isEmpty() ? QStringLiteral("Failed to load the OTBM file")
                                : message);
+    finishLoading(false);
     return false;
+}
+
+void OtbmReader::reportLoadingProgress(int progress, const QString &stage)
+{
+    progress = std::clamp(progress, 0, 100);
+    if (m_loadingProgress != progress) {
+        m_loadingProgress = progress;
+        emit loadingProgressChanged();
+    }
+    if (m_loadingStage != stage) {
+        m_loadingStage = stage;
+        emit loadingStageChanged();
+    }
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 5);
+}
+
+void OtbmReader::finishLoading(bool success)
+{
+    reportLoadingProgress(success ? 100 : m_loadingProgress,
+                          success ? QStringLiteral("Map ready")
+                                  : QStringLiteral("Unable to load map"));
+    if (m_loading) {
+        m_loading = false;
+        emit loadingChanged();
+    }
 }
 
 bool OtbmReader::loadFile(const QString &path)
 {
+    if (!m_loading) {
+        m_loading = true;
+        emit loadingChanged();
+    }
+    reportLoadingProgress(0, QStringLiteral("Opening map..."));
     reset();
 
     NodeFileReader file;
 
-    if (!file.loadFile(path, {QByteArrayLiteral("OTBM"), QByteArray(4, '\0')})) {
+    if (!file.loadFile(path,
+                       {QByteArrayLiteral("OTBM"), QByteArray(4, '\0')},
+                       [this](double progress) {
+                           reportLoadingProgress(2 + static_cast<int>(progress * 28.0),
+                                                 QStringLiteral("Reading OTBM structure..."));
+                       })) {
         return abortLoad(file.errorString());
     }
 
+    reportLoadingProgress(31, QStringLiteral("Reading map header..."));
     BinaryNode &root = file.rootNode();
     if (!parseRootHeader(root)) {
         return abortLoad(m_errorString);
@@ -444,12 +483,14 @@ bool OtbmReader::loadFile(const QString &path)
     }
 
     BinaryNode mapData = root.children().first();
+    reportLoadingProgress(34, QStringLiteral("Reading map tiles..."));
     if (!parseMapData(mapData)) {
         return abortLoad(m_errorString);
     }
 
     QSet<quint64> tilePositions;
     tilePositions.reserve(static_cast<qsizetype>(m_tiles.size()));
+    qsizetype checkedTiles = 0;
     for (const OtbmTile &tile : m_tiles) {
         const quint64 key = posKey3d(tile.x, tile.y, tile.z);
         if (tilePositions.contains(key)) {
@@ -457,19 +498,29 @@ bool OtbmReader::loadFile(const QString &path)
                                  .arg(tile.x).arg(tile.y).arg(tile.z));
         }
         tilePositions.insert(key);
+        ++checkedTiles;
+        if ((checkedTiles & 0xFFF) == 0 && !m_tiles.empty()) {
+            reportLoadingProgress(59 + static_cast<int>(5.0 * checkedTiles / m_tiles.size()),
+                                  QStringLiteral("Validating map tiles..."));
+        }
     }
 
+    reportLoadingProgress(65, QStringLiteral("Indexing map positions..."));
     rebuildPosIndex();
 
     // Spawn and house XML files are optional sidecars and never block map loading.
+    reportLoadingProgress(68, QStringLiteral("Loading spawn data..."));
     loadSpawnsXml(path);
+    reportLoadingProgress(70, QStringLiteral("Loading house data..."));
     loadHousesXml(path);
 
     m_loaded = true;
     m_filePath = path;
     emit filePathChanged();
     setDirty(false);
+    reportLoadingProgress(72, QStringLiteral("Preparing map view..."));
     emit loadedChanged();
+    reportLoadingProgress(76, QStringLiteral("Map data loaded..."));
     return true;
 }
 
@@ -580,7 +631,9 @@ bool OtbmReader::parseMapData(BinaryNode &mapData)
         }
     }
 
-    for (const BinaryNode &sourceChild : mapData.children()) {
+    const auto &mapChildren = mapData.children();
+    qsizetype parsedChildren = 0;
+    for (const BinaryNode &sourceChild : mapChildren) {
         BinaryNode child = sourceChild;
         uint8_t nodeType = 0;
         if (!child.getU8(nodeType)) {
@@ -601,6 +654,11 @@ bool OtbmReader::parseMapData(BinaryNode &mapData)
         default:
             setError(QStringLiteral("Unsupported node in MapData: %1").arg(nodeType));
             return false;
+        }
+        ++parsedChildren;
+        if (!mapChildren.isEmpty()) {
+            reportLoadingProgress(34 + static_cast<int>(24.0 * parsedChildren / mapChildren.size()),
+                                  QStringLiteral("Reading map tiles..."));
         }
     }
 

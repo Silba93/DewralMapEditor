@@ -5,6 +5,7 @@
 #include <QString>
 #include <QVector>
 #include <cstdint>
+#include <functional>
 
 class BinaryNode
 {
@@ -30,7 +31,11 @@ private:
 class NodeFileReader
 {
 public:
-    bool loadFile(const QString &path, const QVector<QByteArray> &acceptedIdentifiers);
+    using ProgressCallback = std::function<void(double)>;
+
+    bool loadFile(const QString &path,
+                  const QVector<QByteArray> &acceptedIdentifiers,
+                  ProgressCallback progressCallback = {});
 
     bool isOk() const { return m_ok; }
     QString errorString() const { return m_errorString; }
@@ -47,11 +52,14 @@ private:
     static constexpr int kMaxDepth = 512;
     bool parseNode(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth);
     bool parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth);
+    void reportProgress(qsizetype position, qsizetype total);
     void setError(const QString &message);
 
     BinaryNode m_root;
     bool m_ok = false;
     QString m_errorString;
+    ProgressCallback m_progressCallback;
+    qsizetype m_lastProgressPosition = 0;
 };
 
 #endif

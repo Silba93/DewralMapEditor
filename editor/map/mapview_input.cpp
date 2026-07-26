@@ -30,6 +30,224 @@ const OtbmTile *MapView::currentFloorTileAt(int x, int y) const
     return m_otbm ? m_otbm->tileAt(x, y, m_floor) : nullptr;
 }
 
+bool MapView::previewWalkable(int x, int y) const
+{
+    if (!m_otbm || !m_otb || !m_dat) return false;
+
+    const OtbmTile *tile = m_otbm->tileAt(x, y, m_floor);
+    if (!tile) return false;
+
+    bool hasGround = false;
+    for (const OtbmMapItem &item : tile->items) {
+        const int clientId = m_otb->clientIdForServerId(item.server_id);
+        const ClientItem *clientItem = clientId > 0
+            ? m_dat->itemByClientId(static_cast<uint16_t>(clientId))
+            : nullptr;
+        if (!clientItem) continue;
+        hasGround = hasGround || clientItem->is_ground;
+        if (clientItem->is_unpassable) return false;
+    }
+    return hasGround;
+}
+
+bool MapView::findPreviewStart(int &x, int &y) const
+{
+    if (m_hoverX >= 0 && m_hoverY >= 0 && previewWalkable(m_hoverX, m_hoverY)) {
+        x = m_hoverX;
+        y = m_hoverY;
+        return true;
+    }
+
+    const int centerX = static_cast<int>(std::floor(
+        m_originX + width() / (2.0 * std::max(1, m_tileSize))));
+    const int centerY = static_cast<int>(std::floor(
+        m_originY + height() / (2.0 * std::max(1, m_tileSize))));
+
+    if (previewWalkable(centerX, centerY)) {
+        x = centerX;
+        y = centerY;
+        return true;
+    }
+
+    for (int radius = 1; radius <= 64; ++radius) {
+        for (int offset = -radius; offset <= radius; ++offset) {
+            const QPoint candidates[] = {
+                QPoint(centerX + offset, centerY - radius),
+                QPoint(centerX + offset, centerY + radius),
+                QPoint(centerX - radius, centerY + offset),
+                QPoint(centerX + radius, centerY + offset)
+            };
+            for (const QPoint &candidate : candidates) {
+                if (previewWalkable(candidate.x(), candidate.y())) {
+                    x = candidate.x();
+                    y = candidate.y();
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool MapView::previewDirectionForKey(int key, int &dx, int &dy, int &direction) const
+{
+    dx = 0;
+    dy = 0;
+    switch (key) {
+    case Qt::Key_Down:
+    case Qt::Key_S:
+        dy = 1;
+        direction = 0;
+        return true;
+    case Qt::Key_Right:
+    case Qt::Key_D:
+        dx = 1;
+        direction = 1;
+        return true;
+    case Qt::Key_Up:
+    case Qt::Key_W:
+        dy = -1;
+        direction = 2;
+        return true;
+    case Qt::Key_Left:
+    case Qt::Key_A:
+        dx = -1;
+        direction = 3;
+        return true;
+    default:
+        return false;
+    }
+}
+
+void MapView::centerPreviewCamera()
+{
+    const qreal tileSize = std::max(1, m_tileSize);
+    m_originX = m_previewX + 0.5 - width() / (2.0 * tileSize);
+    m_originY = m_previewY + 0.5 - height() / (2.0 * tileSize);
+}
+
+void MapView::movePreviewForKey(int key)
+{
+    if (!m_ingamePreview) return;
+
+    int dx = 0;
+    int dy = 0;
+    int direction = m_previewDirection;
+    if (!previewDirectionForKey(key, dx, dy, direction)) return;
+
+    m_previewDirection = direction;
+    bool moved = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_dataMutex);
+        const int nextX = m_previewX + dx;
+        const int nextY = m_previewY + dy;
+        if (previewWalkable(nextX, nextY)) {
+            m_previewX = nextX;
+            m_previewY = nextY;
+            ++m_previewStepFrame;
+            moved = true;
+        }
+    }
+
+    if (moved) {
+        centerPreviewCamera();
+        emit previewPositionChanged();
+    } else {
+        m_previewStepFrame = 0;
+    }
+    emit contentUpdated();
+}
+
+void MapView::stopPreviewMovement()
+{
+    m_previewHeldKeys.clear();
+    m_previewLastKey = 0;
+    m_previewStepFrame = 0;
+    if (m_previewMoveTimer) m_previewMoveTimer->stop();
+}
+
+void MapView::setIngamePreview(bool on)
+{
+    if (m_ingamePreview == on) return;
+
+    if (on) {
+        if (!m_otbm || !m_otbm->isLoaded() || !m_otb || !m_dat || !m_spr) return;
+
+        int startX = 0;
+        int startY = 0;
+        int lookType = 128;
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_dataMutex);
+            if (!findPreviewStart(startX, startY)) return;
+            const ClientItem *outfit = m_dat->outfitByLookType(
+                static_cast<uint16_t>(lookType));
+            if (!outfit || outfit->sprite_ids.empty()) {
+                lookType = 0;
+                for (int candidate = 1; candidate <= 4096; ++candidate) {
+                    outfit = m_dat->outfitByLookType(static_cast<uint16_t>(candidate));
+                    if (outfit && !outfit->sprite_ids.empty()) {
+                        lookType = candidate;
+                        break;
+                    }
+                }
+            }
+            if (lookType <= 0) return;
+            ensureOutfitSprites(lookType);
+        }
+
+        m_previewSavedOriginX = m_originX;
+        m_previewSavedOriginY = m_originY;
+        m_previewSavedTileSize = m_tileSize;
+        m_previewSavedLowerFloors = m_showLowerFloors;
+        m_previewX = startX;
+        m_previewY = startY;
+        m_previewDirection = 0;
+        m_previewStepFrame = 0;
+        m_previewLookType = lookType;
+        m_ingamePreview = true;
+        m_tileSize = 32;
+        m_showLowerFloors = false;
+        stopPreviewMovement();
+        if (!m_previewMoveTimer) {
+            m_previewMoveTimer = new QTimer(this);
+            m_previewMoveTimer->setTimerType(Qt::CoarseTimer);
+            m_previewMoveTimer->setInterval(120);
+            connect(m_previewMoveTimer, &QTimer::timeout, this, [this] {
+                if (m_previewHeldKeys.isEmpty()) {
+                    m_previewMoveTimer->stop();
+                    return;
+                }
+                if (!m_previewHeldKeys.contains(m_previewLastKey))
+                    m_previewLastKey = *m_previewHeldKeys.cbegin();
+                movePreviewForKey(m_previewLastKey);
+            });
+        }
+        m_heldArrows.clear();
+        if (m_arrowTimer) m_arrowTimer->stop();
+        setCursor(Qt::ArrowCursor);
+        centerPreviewCamera();
+    } else {
+        stopPreviewMovement();
+        m_ingamePreview = false;
+        m_originX = m_previewSavedOriginX;
+        m_originY = m_previewSavedOriginY;
+        m_tileSize = m_previewSavedTileSize;
+        m_showLowerFloors = m_previewSavedLowerFloors;
+        setCursor((m_eraseMode || m_brushServerId > 0 || m_activeZone != 0)
+                      ? Qt::CrossCursor : Qt::ArrowCursor);
+    }
+
+    clearChunkQuadCache();
+    ++m_dataVersion;
+    emit ingamePreviewChanged();
+    emit previewPositionChanged();
+    emit tileSizeChanged();
+    emit showLowerFloorsChanged();
+    emit contentUpdated();
+    update();
+    forceActiveFocus();
+}
+
 void MapView::clearSelection()
 {
     if (m_selected.isEmpty()) return;
@@ -75,7 +293,15 @@ void MapView::updateHoverText()
                                 : QStringLiteral(": %1").arg(name);
         }
     }
-    if (t != m_hoverText) { m_hoverText = t; emit hoverChanged(); }
+    if (t != m_hoverText) {
+        m_hoverText = t;
+        // Emisja zdlawiona do ~20 Hz: kazda zmiana tekstu to binding + relayout
+        // + PELNA klatka kompozycji okna QML (statusbar zyje w scenie okna).
+        // Przy szybkim ruchu myszy na zoom-out kafel zmienia sie kilkadziesiat
+        // razy na sekunde - okno komponowalo sie z ta czestotliwoscia tylko po
+        // to, by przepisac napis pozycji. Property i tak czyta swiezy m_hoverText.
+        if (!m_hoverEmitTimer->isActive()) m_hoverEmitTimer->start();
+    }
 }
 
 QVariantList MapView::selectionDetails() const
@@ -115,6 +341,11 @@ void MapView::mousePressEvent(QMouseEvent *event)
 {
     forceActiveFocus();
     m_lastMouse = event->position();
+
+    if (m_ingamePreview) {
+        event->accept();
+        return;
+    }
 
     if (m_pasting) {
         if (event->button() == Qt::LeftButton) {
@@ -200,6 +431,7 @@ void MapView::mousePressEvent(QMouseEvent *event)
             m_moveMoved = false;
             m_moveSrcX = tx;
             m_moveSrcY = ty;
+            m_moveSrcZ = m_floor;
 
             m_moveServerId = tile->items.empty() ? 0 : tile->items.back().server_id;
             emit contentUpdated(); update();
@@ -243,6 +475,17 @@ void MapView::mousePressEvent(QMouseEvent *event)
 void MapView::mouseMoveEvent(QMouseEvent *event)
 {
     const QPointF pos = event->position();
+
+    if (m_ingamePreview) {
+        const QPoint hover = tileAtScreen(pos);
+        if (hover.x() != m_hoverX || hover.y() != m_hoverY) {
+            m_hoverX = hover.x();
+            m_hoverY = hover.y();
+            updateHoverText();
+        }
+        event->accept();
+        return;
+    }
 
     if (m_panning) {
 
@@ -309,6 +552,11 @@ void MapView::mouseMoveEvent(QMouseEvent *event)
 
 void MapView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_ingamePreview) {
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton && m_painting) {
         m_painting = false;
         if (m_dragDraw) {
@@ -323,10 +571,11 @@ void MapView::mouseReleaseEvent(QMouseEvent *event)
     } else if (event->button() == Qt::LeftButton && m_movingSel) {
         m_movingSel = false;
         const QPoint t = tileAtScreen(event->position());
-        if (m_moveMoved && (t.x() != m_moveSrcX || t.y() != m_moveSrcY)) {
-
-            moveSelection(t.x() - m_moveSrcX, t.y() - m_moveSrcY);
-        }
+        const int dx = t.x() - m_moveSrcX;
+        const int dy = t.y() - m_moveSrcY;
+        const int dz = m_floor - m_moveSrcZ;
+        if (m_moveMoved && (dx != 0 || dy != 0 || dz != 0))
+            moveSelection(dx, dy, dz);
 
         emit contentUpdated(); update();
     } else if (event->button() == Qt::LeftButton && m_selecting) {
@@ -363,11 +612,28 @@ void MapView::hoverMoveEvent(QHoverEvent *event)
 {
     if (m_panning || m_selecting) return;
     const QPoint h = tileAtScreen(event->position());
+    if (m_ingamePreview) {
+        if (h.x() != m_hoverX || h.y() != m_hoverY) {
+            m_hoverX = h.x();
+            m_hoverY = h.y();
+            updateHoverText();
+        }
+        event->accept();
+        return;
+    }
+
     if (h.x() != m_hoverX || h.y() != m_hoverY) {
         m_hoverX = h.x();
         m_hoverY = h.y();
         updateHoverText();
-        if (!m_selectionMode || m_pasting) {
+        // Render mapy TYLKO gdy hover ma na niej wizualna reprezentacje (kursor
+        // pedzla / ghost / wklejanie). Goly ruch myszy zmienia jedynie statusbar
+        // (QML) - przerysowywanie FBO przy kazdym przekroczeniu kafla bylo
+        // glownym kosztem CPU podczas przesuwania kursora nad mapa.
+        const bool cursorVisual = m_brushServerId > 0 || m_activeZone != 0
+            || m_eraseMode || m_spawnBrush || !m_creatureBrush.isEmpty()
+            || m_houseBrush > 0 || m_houseExitMode || !m_activeDoodadBrush.isEmpty();
+        if (m_pasting || (!m_selectionMode && cursorVisual)) {
             emit contentUpdated();
             update();
         }
@@ -377,6 +643,11 @@ void MapView::hoverMoveEvent(QHoverEvent *event)
 
 void MapView::wheelEvent(QWheelEvent *event)
 {
+    if (m_ingamePreview) {
+        event->accept();
+        return;
+    }
+
     const int steps = event->angleDelta().y() / 120;
     if (steps == 0) {
         event->ignore();
@@ -419,6 +690,31 @@ void MapView::zoomAt(int steps, qreal px, qreal py)
 
 void MapView::keyPressEvent(QKeyEvent *event)
 {
+    if (m_ingamePreview) {
+        if (event->key() == Qt::Key_Escape) {
+            setIngamePreview(false);
+            event->accept();
+            return;
+        }
+
+        int dx = 0;
+        int dy = 0;
+        int direction = 0;
+        if (previewDirectionForKey(event->key(), dx, dy, direction)) {
+            if (!event->isAutoRepeat()) {
+                const bool wasHeld = m_previewHeldKeys.contains(event->key());
+                m_previewHeldKeys.insert(event->key());
+                m_previewLastKey = event->key();
+                if (!wasHeld) movePreviewForKey(event->key());
+                if (!m_previewMoveTimer->isActive()) m_previewMoveTimer->start();
+            }
+            event->accept();
+            return;
+        }
+
+        event->accept();
+        return;
+    }
 
     if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal) {
         setFloor(m_floor - 1);
@@ -500,8 +796,8 @@ void MapView::keyPressEvent(QKeyEvent *event)
             m_heldArrows.insert(k);
             if (!m_arrowTimer) {
                 m_arrowTimer = new QTimer(this);
-                m_arrowTimer->setTimerType(Qt::PreciseTimer);
-                m_arrowTimer->setInterval(8);
+                m_arrowTimer->setTimerType(Qt::CoarseTimer);
+                m_arrowTimer->setInterval(16);
                 connect(m_arrowTimer, &QTimer::timeout, this, [this] {
                     const double dt = m_arrowClock.nsecsElapsed() / 1e9;
                     m_arrowClock.restart();
@@ -512,7 +808,7 @@ void MapView::keyPressEvent(QKeyEvent *event)
                     if (m_heldArrows.contains(Qt::Key_Right)) m_originX += speed;
                     if (m_heldArrows.contains(Qt::Key_Up))    m_originY -= speed;
                     if (m_heldArrows.contains(Qt::Key_Down))  m_originY += speed;
-                    emit contentUpdated(); update();
+                    emit contentUpdated();
                 });
             }
             if (!m_arrowTimer->isActive()) {
@@ -528,6 +824,21 @@ void MapView::keyPressEvent(QKeyEvent *event)
 
 void MapView::keyReleaseEvent(QKeyEvent *event)
 {
+    if (m_ingamePreview) {
+        if (!event->isAutoRepeat() && m_previewHeldKeys.remove(event->key())) {
+            if (m_previewHeldKeys.isEmpty()) {
+                m_previewMoveTimer->stop();
+                m_previewLastKey = 0;
+                m_previewStepFrame = 0;
+                emit contentUpdated();
+            } else if (m_previewLastKey == event->key()) {
+                m_previewLastKey = *m_previewHeldKeys.cbegin();
+            }
+        }
+        event->accept();
+        return;
+    }
+
     const int k = event->key();
     if (!event->isAutoRepeat() && m_heldArrows.remove(k)) {
         if (m_heldArrows.isEmpty() && m_arrowTimer) m_arrowTimer->stop();
@@ -542,5 +853,6 @@ void MapView::focusOutEvent(QFocusEvent *event)
 
     m_heldArrows.clear();
     if (m_arrowTimer) m_arrowTimer->stop();
+    stopPreviewMovement();
     QQuickItem::focusOutEvent(event);
 }

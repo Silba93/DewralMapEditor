@@ -4,17 +4,47 @@ import Tibia 1.0
 import "style"
 
 Rectangle {
-    id: palette
+    id: paletteRoot
 
     required property var app
 
     required property var mapCtrl
+    readonly property bool githubUi: Backend.uiTheme.style === "github-dark"
+    readonly property string currentKind: paletteCol.currentKind
+
+    signal collapseRequested
+
+    function selectKind(kind) {
+        paletteCol.selectKind(kind);
+    }
 
     width: 210
-    color: "transparent"
+    color: githubUi ? "#0F141B" : "transparent"
+    radius: 0
+    border {
+        width: githubUi ? 1 : 0
+        color: "#242D38"
+    }
+
+    Rectangle {
+        id: paletteDockEdge
+        anchors {
+            right: parent.right
+            top: parent.top
+            bottom: parent.bottom
+            rightMargin: 1
+            topMargin: 8
+            bottomMargin: 8
+        }
+        width: 2
+        radius: 1
+        visible: false
+        color: "#7A7A7A"
+    }
 
     TibiaPanel {
         anchors.fill: parent
+        visible: !paletteRoot.githubUi
     }
 
     PaletteFilter {
@@ -25,8 +55,11 @@ Rectangle {
     Column {
         id: paletteCol
         anchors.fill: parent
-        anchors.margins: 6
-        spacing: 4
+        anchors.leftMargin: paletteRoot.githubUi ? 16 : 6
+        anchors.rightMargin: paletteRoot.githubUi ? 16 : 6
+        anchors.topMargin: paletteRoot.githubUi ? 8 : 6
+        anchors.bottomMargin: paletteRoot.githubUi ? 16 : 6
+        spacing: paletteRoot.githubUi ? 10 : 4
 
         property var kinds: ["All Items", "Terrain Palette", "Doodad Palette", "Item Palette", "RAW Palette", "Creature Palette", "House Palette", "My Palettes"]
         property bool creatureMode: currentKind === "Creature Palette"
@@ -50,6 +83,8 @@ Rectangle {
 
         property var subNames: {
             const _r = Backend.tilesetStore.revision;
+            if (currentKind === "All Items")
+                return Backend.tilesetStore.namesFor("item");
             if (currentCategory !== "")
                 return Backend.tilesetStore.namesFor(currentCategory);
             if (currentKind === "My Palettes")
@@ -78,11 +113,28 @@ Rectangle {
         }
         onCurrentIdsChanged: {
             if (currentIds === null) {
-                paletteFilter.mode = "all";
+                if (paletteFilter.searchText !== "")
+                    paletteFilter.mode = "all";
                 return;
             }
             paletteFilter.setIds(currentIds);
-            paletteFilter.mode = "ids";
+        }
+
+        property string pendingSearchText: ""
+        function queueSearch(text) {
+            pendingSearchText = text;
+            searchDebounce.restart();
+        }
+
+        Timer {
+            id: searchDebounce
+            interval: 120
+            repeat: false
+            onTriggered: {
+                if (paletteCol.currentKind === "All Items")
+                    paletteFilter.mode = "all";
+                paletteFilter.searchText = paletteCol.pendingSearchText;
+            }
         }
 
         function selectCustomPalette(name) {
@@ -92,6 +144,12 @@ Rectangle {
                 if (idx >= 0)
                     subCombo.currentIndex = idx;
             });
+        }
+
+        function selectKind(kind) {
+            var idx = kinds.indexOf(kind);
+            if (idx >= 0)
+                kindCombo.currentIndex = idx;
         }
 
         function selectCategoryTileset(category, name) {
@@ -110,16 +168,243 @@ Rectangle {
         }
 
         Column {
-            id: controlsColumn
+            id: githubControlsColumn
+            visible: paletteRoot.githubUi
             width: parent.width
+            height: visible ? implicitHeight : 0
+            spacing: 10
+
+            Row {
+                id: githubCategoryRow
+                width: parent.width
+                height: 62
+                spacing: 4
+                property real categoryWidth: Math.floor((width - spacing * 4) / 5)
+
+                Repeater {
+                    model: [
+                        { label: "Items", icon: "items", kind: "Item Palette" },
+                        { label: "Terrain", icon: "terrain", kind: "Terrain Palette" },
+                        { label: "Doodads", icon: "doodads", kind: "Doodad Palette" },
+                        { label: "Creatures", icon: "creatures", kind: "Creature Palette" },
+                        { label: "Houses", icon: "houses", kind: "House Palette" }
+                    ]
+
+                    delegate: Item {
+                        id: categoryTab
+
+                        required property var modelData
+                        readonly property bool active: modelData.kind === "Item Palette"
+                                                     ? (paletteCol.currentKind === "Item Palette" || paletteCol.currentKind === "All Items")
+                                                     : paletteCol.currentKind === modelData.kind
+
+                        width: githubCategoryRow.categoryWidth
+                        height: githubCategoryRow.height
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 4
+                            color: categoryTab.active
+                                   ? "#174D2B"
+                                   : (categoryTabArea.containsMouse ? "#151C24" : "transparent")
+                            border {
+                                width: 1
+                                color: categoryTab.active ? "#2EA043"
+                                                          : (categoryTabArea.containsMouse ? "#2D3743" : "transparent")
+                            }
+                        }
+
+                        Column {
+                            anchors {
+                                left: parent.left
+                                right: parent.right
+                                verticalCenter: parent.verticalCenter
+                            }
+                            spacing: 6
+
+                            GithubIcon {
+                                width: 23
+                                height: 23
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                name: categoryTab.modelData.icon
+                                opacity: categoryTab.active ? 1 : 0.72
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: categoryTab.modelData.label
+                                color: categoryTab.active ? "#FFFFFF" : "#A7B1BC"
+                                font {
+                                    pixelSize: githubCategoryRow.width < 300 ? 9 : 11
+                                    weight: categoryTab.active ? Font.DemiBold : Font.Normal
+                                }
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        MouseArea {
+                            id: categoryTabArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: paletteCol.selectKind(categoryTab.modelData.kind)
+                        }
+                    }
+                }
+
+            }
+
+            Row {
+                width: parent.width
+                height: 42
+                spacing: 8
+
+                TextField {
+                    id: githubSearch
+                    width: parent.width - filterButton.width - parent.spacing
+                    height: parent.height
+                    leftPadding: 38
+                    rightPadding: 12
+                    placeholderText: "Search items..."
+                    placeholderTextColor: "#768390"
+                    color: "#E6EDF3"
+                    selectionColor: "#2EA043"
+                    selectedTextColor: "#FFFFFF"
+                    font.pixelSize: 12
+                    background: Rectangle {
+                        radius: 4
+                        color: "#0D1117"
+                        border {
+                            width: githubSearch.activeFocus ? 2 : 1
+                            color: githubSearch.activeFocus ? "#3A7D55" : "#242D38"
+                        }
+                    }
+                    onTextChanged: paletteCol.queueSearch(text)
+
+                    GithubIcon {
+                        anchors {
+                            left: parent.left
+                            leftMargin: 11
+                            verticalCenter: parent.verticalCenter
+                        }
+                        width: 18
+                        height: 18
+                        name: "search"
+                    }
+                }
+
+                Item {
+                    id: filterButton
+                    width: 42
+                    height: 42
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 4
+                        color: filterArea.containsMouse ? "#171E27" : "#111820"
+                        border.width: 1
+                        border.color: filterArea.containsMouse ? "#3A4655" : "#242D38"
+                    }
+
+                    GithubIcon {
+                        anchors.centerIn: parent
+                        width: 20
+                        height: 20
+                        name: "filter"
+                    }
+
+                    MouseArea {
+                        id: filterArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: githubSubCombo.popup.open()
+                    }
+
+                    GithubToolTip {
+                        targetItem: filterArea
+                        targetHovered: filterArea.containsMouse
+                        message: "Choose palette category"
+                    }
+                }
+            }
+
+            Item {
+                width: parent.width
+                height: 40
+
+                GithubCombo {
+                    id: githubSubCombo
+                    anchors.fill: parent
+                    model: {
+                        if (paletteCol.currentKind === "Item Palette" || paletteCol.currentKind === "All Items")
+                            return ["All Items"].concat(paletteCol.subNames);
+                        if (paletteCol.showSub)
+                            return paletteCol.subNames;
+                        if (paletteCol.creatureMode)
+                            return ["All creatures"];
+                        if (paletteCol.houseMode)
+                            return ["All houses"];
+                        return ["All categories"];
+                    }
+                    currentIndex: {
+                        if (paletteCol.currentKind === "All Items")
+                            return 0;
+                        if (paletteCol.currentKind === "Item Palette")
+                            return subCombo.currentIndex + 1;
+                        return paletteCol.showSub ? subCombo.currentIndex : 0;
+                    }
+                    enabled: paletteCol.currentKind === "Item Palette" || paletteCol.currentKind === "All Items" || paletteCol.showSub
+                    onActivated: index => {
+                        if (paletteCol.currentKind === "Item Palette" || paletteCol.currentKind === "All Items") {
+                            if (index === 0) {
+                                kindCombo.currentIndex = paletteCol.kinds.indexOf("All Items");
+                            } else {
+                                kindCombo.currentIndex = paletteCol.kinds.indexOf("Item Palette");
+                                Qt.callLater(function () {
+                                    subCombo.currentIndex = index - 1;
+                                });
+                            }
+                        } else if (paletteCol.showSub) {
+                            subCombo.currentIndex = index;
+                        }
+                    }
+                }
+            }
+
+            Text {
+                width: parent.width
+                text: (paletteCol.showSub && paletteCol.currentSubName !== ""
+                       ? paletteCol.currentSubName
+                       : paletteCol.currentKind)
+                      + "  (" + (paletteCol.creatureMode
+                                  ? Backend.creatureStore.count
+                                  : (paletteCol.houseMode ? houseCol.houses.length : grid.count)) + ")"
+                color: "#8B949E"
+                font.pixelSize: 12
+                elide: Text.ElideRight
+            }
+        }
+
+        Column {
+            id: controlsColumn
+            visible: !paletteRoot.githubUi
+            width: parent.width
+            height: visible ? implicitHeight : 0
             spacing: 4
+
+            Item {
+                width: 0
+                height: 0
+            }
 
             TibiaComboBox {
                 id: kindCombo
                 width: parent.width
                 height: 23
                 model: paletteCol.kinds
-                currentIndex: 0
+                currentIndex: paletteRoot.githubUi ? paletteCol.kinds.indexOf("Item Palette") : 0
             }
 
             Text {
@@ -147,7 +432,7 @@ Rectangle {
                 width: parent.width - 4
                 height: 22
                 placeholderText: "Search..."
-                onTextChanged: paletteFilter.searchText = text
+                onTextChanged: paletteCol.queueSearch(text)
             }
 
             Text {
@@ -162,40 +447,78 @@ Rectangle {
 
         Item {
             width: parent.width
-            height: parent.height - controlsColumn.height - brushSizeBox.height - paletteCol.spacing * 2
+            height: parent.height - controlsColumn.height - githubControlsColumn.height - brushSizeBox.height - paletteCol.spacing * 3
 
             GridView {
                 id: grid
+                readonly property int githubGridGap: 8
+                readonly property int githubPreferredCellWidth: Math.max(72, paletteRoot.app.iconSizePx + 14)
+                readonly property int githubMaxNativeColumns: Math.max(1, Math.floor(width / 76))
+                readonly property int githubColumns: Math.min(githubMaxNativeColumns,
+                                                               Math.max(1, Math.floor((width + githubGridGap)
+                                                                                      / (githubPreferredCellWidth + githubGridGap) + 0.4)))
+                readonly property real githubCellHeight: paletteRoot.app.iconSizePx + 22
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: parent.width - 14
+                width: parent.width - (paletteRoot.githubUi ? 4 : 14)
                 clip: true
-                cellWidth: app.iconSizePx
-                cellHeight: app.iconSizePx
+                cellWidth: paletteRoot.githubUi
+                           ? Math.max(1, Math.floor(width / githubColumns))
+                           : paletteRoot.app.iconSizePx
+                cellHeight: paletteRoot.githubUi
+                            ? githubCellHeight
+                            : paletteRoot.app.iconSizePx
 
                 onCellWidthChanged: grid.positionViewAtBeginning()
                 visible: !paletteCol.creatureMode && !paletteCol.houseMode
-                model: Backend.otbReader.loaded ? paletteFilter : (Backend.datReader.loaded ? Backend.datReader : Backend.sprReader)
+                readonly property bool directAllItems:
+                    Backend.otbReader.loaded
+                    && paletteCol.currentKind === "All Items"
+                    && paletteFilter.searchText === ""
+
+                model: Backend.otbReader.loaded
+                       ? (directAllItems ? Backend.otbReader : paletteFilter)
+                       : (Backend.datReader.loaded ? Backend.datReader : Backend.sprReader)
 
                 delegate: Rectangle {
-                    width: grid.cellWidth - 2
-                    height: grid.cellHeight - 2
+                    width: grid.cellWidth - (paletteRoot.githubUi ? grid.githubGridGap : 2)
+                    height: grid.cellHeight - (paletteRoot.githubUi ? grid.githubGridGap : 2)
+                    clip: true
                     property bool isBrush: typeof serverId !== "undefined" && mapCtrl.brushServerId === serverId
-                    color: isBrush ? "#2f6f4f" : (paletteCell.containsMouse ? "#303030" : "#252525")
-                    border.color: isBrush ? "#7fdc8f" : "#3a3a3a"
+                    radius: paletteRoot.githubUi ? 4 : 0
+                    color: isBrush
+                           ? (paletteRoot.githubUi ? "#163B2C" : "#2f6f4f")
+                           : (paletteCell.containsMouse
+                              ? (paletteRoot.githubUi ? "#161E27" : "#303030")
+                              : (paletteRoot.githubUi ? "#0D1117" : "#252525"))
+                    border.color: isBrush
+                                  ? (paletteRoot.githubUi ? "#2EA043" : "#7fdc8f")
+                                  : (paletteRoot.githubUi
+                                     ? (paletteCell.containsMouse ? "#3A4655" : "#202A35")
+                                     : "#3a3a3a")
                     border.width: isBrush ? 2 : 1
 
                     property string doodadPrev: (typeof serverId !== "undefined") ? mapCtrl.doodadPreviewSource(serverId) : ""
 
                     Image {
                         anchors.centerIn: parent
+                        anchors.verticalCenterOffset: paletteRoot.githubUi ? -4 : 0
 
-                        readonly property int nativeW: parent.doodadPrev !== "" ? implicitWidth : (typeof itemWidth !== "undefined" ? Math.min(itemWidth, 2) : 1) * 32
-                        readonly property int nativeH: parent.doodadPrev !== "" ? implicitHeight : (typeof itemHeight !== "undefined" ? Math.min(itemHeight, 2) : 1) * 32
-                        readonly property real tileScale: (grid.cellWidth - 6) / 64
+                        readonly property int nativeW: parent.doodadPrev !== ""
+                                                               ? Math.max(1, implicitWidth)
+                                                               : Math.max(1, (typeof itemWidth !== "undefined" ? itemWidth : 1) * 32)
+                        readonly property int nativeH: parent.doodadPrev !== ""
+                                                               ? Math.max(1, implicitHeight)
+                                                               : Math.max(1, (typeof itemHeight !== "undefined" ? itemHeight : 1) * 32)
+                        readonly property real availableW: Math.max(1, parent.width - (paletteRoot.githubUi ? 12 : 6))
+                        readonly property real availableH: Math.max(1, parent.height - (paletteRoot.githubUi ? 24 : 6))
+                        readonly property real tileScale: (grid.cellWidth - (paletteRoot.githubUi ? 16 : 6)) / 64
 
-                        readonly property real fitScale: Math.min(tileScale, (grid.cellWidth - 6) / Math.max(1, nativeW), (grid.cellHeight - 6) / Math.max(1, nativeH))
+                        readonly property real fitScale: Math.min(
+                            paletteRoot.githubUi ? 1 : tileScale,
+                            availableW / nativeW,
+                            availableH / nativeH)
                         width: nativeW * fitScale
                         height: nativeH * fitScale
                         fillMode: Image.PreserveAspectFit
@@ -215,10 +538,13 @@ Rectangle {
 
                     Text {
                         anchors.bottom: parent.bottom
-                        anchors.right: parent.right
-                        anchors.margins: 2
-                        font.pixelSize: 9
-                        color: "#777"
+                        anchors.horizontalCenter: paletteRoot.githubUi ? parent.horizontalCenter : undefined
+                        anchors.right: paletteRoot.githubUi ? undefined : parent.right
+                        anchors.margins: paletteRoot.githubUi ? 4 : 2
+                        font.pixelSize: paletteRoot.githubUi
+                                        ? (paletteRoot.app.iconSizePx >= 88 ? 13 : 11)
+                                        : 9
+                        color: paletteRoot.githubUi ? "#7D8590" : "#777"
                         text: {
                             if (typeof serverId !== "undefined")
                                 return serverId;
@@ -236,8 +562,14 @@ Rectangle {
                         hoverEnabled: true
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         cursorShape: Qt.PointingHandCursor
-                        ToolTip.visible: containsMouse && typeof itemName !== "undefined" && itemName.length > 0
+                        ToolTip.visible: !paletteRoot.githubUi && paletteCell.containsMouse && typeof itemName !== "undefined" && itemName.length > 0
                         ToolTip.text: (typeof itemName !== "undefined" ? itemName : "") + (typeof serverId !== "undefined" ? "  (sid " + serverId + ")" : "")
+                        ToolTip.delay: 550
+                        GithubToolTip {
+                            targetItem: paletteCell
+                            targetHovered: paletteRoot.githubUi && paletteCell.containsMouse && typeof itemName !== "undefined" && itemName.length > 0
+                            message: (typeof itemName !== "undefined" ? itemName : "") + (typeof serverId !== "undefined" ? "  (sid " + serverId + ")" : "")
+                        }
 
                         onClicked: mouse => {
                             if (typeof serverId === "undefined")
@@ -341,8 +673,14 @@ Rectangle {
                             width: creatureList.cellWidth - 2
                             height: creatureList.cellHeight - 2
                             property bool isBrush: mapCtrl.creatureBrush === name
-                            color: isBrush ? "#2f6f4f" : (cma.containsMouse ? "#303030" : "#252525")
-                            border.color: isBrush ? "#7fdc8f" : "#3a3a3a"
+                            color: isBrush
+                                   ? (paletteRoot.githubUi ? "#163B2C" : "#2f6f4f")
+                                   : (paletteRoot.githubUi
+                                      ? (cma.containsMouse ? "#161E27" : "#0D1117")
+                                      : (cma.containsMouse ? "#3A3A3A" : "#2A2A2A"))
+                            border.color: isBrush
+                                          ? (paletteRoot.githubUi ? "#2EA043" : "#7fdc8f")
+                                          : (paletteRoot.githubUi ? "#202A35" : "#3a3a3a")
                             border.width: isBrush ? 2 : 1
 
                             Column {
@@ -364,7 +702,7 @@ Rectangle {
                                 Text {
 
                                     text: name
-                                    color: "#c0c0c0"
+                                    color: paletteRoot.githubUi ? "#A7B1BC" : "#c0c0c0"
                                     font.pixelSize: 10
                                     width: creatureList.cellWidth - 8
                                     horizontalAlignment: Text.AlignHCenter
@@ -376,9 +714,14 @@ Rectangle {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                ToolTip.visible: containsMouse
-                                ToolTip.delay: 500
+                                ToolTip.visible: !paletteRoot.githubUi && cma.containsMouse
+                                ToolTip.delay: 550
                                 ToolTip.text: name + (isNpc ? "  (NPC)" : "")
+                                GithubToolTip {
+                                    targetItem: cma
+                                    targetHovered: paletteRoot.githubUi && cma.containsMouse
+                                    message: name + (isNpc ? "  (NPC)" : "")
+                                }
 
                                 onClicked: mapCtrl.creatureBrush = isBrush ? "" : name
                             }
@@ -603,8 +946,14 @@ Rectangle {
                             width: houseList.width
                             height: 34
                             property bool isSel: houseCol.selHouseId === modelData.id
-                            color: isSel ? "#2f6f4f" : (hma.containsMouse ? "#303030" : "#252525")
-                            border.color: isSel ? "#7fdc8f" : "#3a3a3a"
+                            color: isSel
+                                   ? (paletteRoot.githubUi ? "#163B2C" : "#2f6f4f")
+                                   : (paletteRoot.githubUi
+                                      ? (hma.containsMouse ? "#161E27" : "#0D1117")
+                                      : (hma.containsMouse ? "#3A3A3A" : "#2A2A2A"))
+                            border.color: isSel
+                                          ? (paletteRoot.githubUi ? "#2EA043" : "#7fdc8f")
+                                          : (paletteRoot.githubUi ? "#202A35" : "#3a3a3a")
                             border.width: 1
 
                             Column {
@@ -615,7 +964,7 @@ Rectangle {
                                 }
                                 Text {
                                     text: modelData.name
-                                    color: "#c0c0c0"
+                                    color: paletteRoot.githubUi ? "#A7B1BC" : "#c0c0c0"
                                     font.pixelSize: 12
                                     width: houseList.width - 12
                                     elide: Text.ElideRight
@@ -672,23 +1021,31 @@ Rectangle {
         Column {
             id: brushSizeBox
             width: parent.width
-            spacing: 3
+            spacing: paletteRoot.githubUi ? 9 : 3
+
+            Rectangle {
+                visible: paletteRoot.githubUi
+                width: parent.width
+                height: visible ? 1 : 0
+                color: "#242D38"
+            }
 
             Text {
                 text: "Brush size"
-                color: "#ddd"
-                font.pixelSize: 11
+                color: paletteRoot.githubUi ? "#E6EDF3" : "#ddd"
+                font.pixelSize: paletteRoot.githubUi ? 12 : 11
                 font.bold: true
             }
 
             Flow {
                 width: parent.width
-                spacing: 3
+                spacing: paletteRoot.githubUi ? 5 : 3
 
                 Repeater {
                     model: ["square", "circle"]
                     delegate: BrushBtn {
                         required property string modelData
+                        githubStyle: paletteRoot.githubUi
                         active: mapCtrl.brushShape === modelData
                         round: modelData === "circle"
                         iconSize: 14
@@ -697,7 +1054,7 @@ Rectangle {
                 }
 
                 Item {
-                    width: 10
+                    width: paletteRoot.githubUi ? 6 : 10
                     height: 26
                 }
 
@@ -706,13 +1063,98 @@ Rectangle {
                     delegate: BrushBtn {
                         required property int modelData
                         required property int index
+                        githubStyle: paletteRoot.githubUi
                         active: mapCtrl.brushSize === modelData
                         round: mapCtrl.brushShape === "circle"
                         iconSize: 6 + index * 2
                         onClicked: mapCtrl.brushSize = modelData
-                        ToolTip.visible: hovered
+                        ToolTip.visible: !paletteRoot.githubUi && hovered
                         ToolTip.text: (modelData * 2 + 1) + "x" + (modelData * 2 + 1)
+                        GithubToolTip {
+                            targetItem: hoverArea
+                            targetHovered: hovered
+                            message: (modelData * 2 + 1) + "x" + (modelData * 2 + 1)
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    component GithubCombo: ComboBox {
+        id: combo
+
+        height: 40
+        leftPadding: 12
+        rightPadding: 34
+        font.pixelSize: 13
+
+        contentItem: Text {
+            leftPadding: combo.leftPadding
+            rightPadding: combo.rightPadding
+            text: combo.displayText
+            color: combo.enabled ? "#E6EDF3" : "#768390"
+            font: combo.font
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        indicator: Text {
+            x: combo.width - width - 13
+            anchors.verticalCenter: parent.verticalCenter
+            text: "\u2304"
+            color: combo.enabled ? "#C9D1D9" : "#768390"
+            font.pixelSize: 18
+        }
+
+        background: Rectangle {
+            radius: 4
+            color: combo.down ? "#171E27" : "#0D1117"
+            border {
+                width: combo.activeFocus ? 2 : 1
+                color: combo.activeFocus ? "#3A7D55" : "#242D38"
+            }
+        }
+
+        delegate: ItemDelegate {
+            id: comboDelegate
+            required property var modelData
+            required property int index
+            width: combo.width
+            height: 34
+            leftPadding: 12
+            text: modelData
+            highlighted: combo.highlightedIndex === comboDelegate.index
+            contentItem: Text {
+                text: comboDelegate.text
+                color: "#E6EDF3"
+                font.pixelSize: 12
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
+            background: Rectangle {
+                color: comboDelegate.highlighted ? "#1B2632" : "#10151C"
+            }
+        }
+
+        popup: Popup {
+            y: combo.height + 4
+            width: combo.width
+            implicitHeight: Math.min(contentItem.implicitHeight + 8, 320)
+            padding: 4
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: combo.popup.visible ? combo.delegateModel : null
+                currentIndex: combo.highlightedIndex
+                ScrollIndicator.vertical: ScrollIndicator {}
+            }
+            background: Rectangle {
+                radius: 4
+                color: "#10151C"
+                border {
+                    width: 1
+                    color: "#2D3743"
                 }
             }
         }
@@ -722,14 +1164,17 @@ Rectangle {
         id: bb
         property bool active: false
         property bool round: false
+        property bool githubStyle: false
         property int iconSize: 14
         property alias hovered: bbMa.containsMouse
+        property alias hoverArea: bbMa
         signal clicked
-        width: 26
-        height: 26
+        width: bb.githubStyle ? 32 : 26
+        height: bb.githubStyle ? 32 : 26
 
         BorderImage {
             anchors.fill: parent
+            visible: !bb.githubStyle
             source: (Backend.uiTheme.tex + "panel_side.png")
             smooth: false
             border {
@@ -750,12 +1195,23 @@ Rectangle {
         }
 
         Rectangle {
+            anchors.fill: parent
+            visible: bb.githubStyle
+            radius: 5
+            color: bbMa.containsMouse ? "#171E27" : "#111820"
+                border {
+                    width: bb.active ? 2 : 1
+                color: bb.active ? "#2EA043" : "#242D38"
+            }
+        }
+
+        Rectangle {
             anchors.centerIn: parent
             width: bb.iconSize
             height: bb.iconSize
             radius: bb.round ? width / 2 : 0
-            color: bb.active ? "#d8d8d8" : "#9a9a9a"
-            border.color: bb.active ? "#ffffff" : "#c8c8c8"
+            color: bb.active ? "#3FB950" : "#7D8590"
+            border.color: bb.active ? "#7EE787" : "#A7B1BC"
             border.width: 1
         }
         MouseArea {
@@ -921,10 +1377,12 @@ Rectangle {
     }
 
     Connections {
-        target: palette.mapCtrl
+        target: paletteRoot.mapCtrl
         function onBrushChanged() {
-            if (palette.mapCtrl.brushServerId > 0) {
-                var row = paletteFilter.rowForServerId(palette.mapCtrl.brushServerId);
+            if (paletteRoot.mapCtrl.brushServerId > 0) {
+                var row = grid.directAllItems
+                        ? Backend.otbReader.rowForServerId(paletteRoot.mapCtrl.brushServerId)
+                        : paletteFilter.rowForServerId(paletteRoot.mapCtrl.brushServerId);
                 if (row >= 0)
                     grid.positionViewAtIndex(row, GridView.Center);
             }

@@ -1,6 +1,8 @@
 #include "palettefilter.h"
 #include "otbreader.h"
 
+#include <utility>
+
 PaletteFilter::PaletteFilter(QObject *parent)
     : QSortFilterProxyModel(parent)
 {
@@ -9,24 +11,38 @@ PaletteFilter::PaletteFilter(QObject *parent)
 void PaletteFilter::setMode(const QString &m)
 {
     if (m_mode == m) return;
+    beginFilterChange();
     m_mode = m;
+    endFilterChange(Direction::Rows);
     emit modeChanged();
-    invalidateFilter();
 }
 
 void PaletteFilter::setSearchText(const QString &t)
 {
     if (m_search == t) return;
+    beginFilterChange();
     m_search = t;
+    endFilterChange(Direction::Rows);
     emit searchTextChanged();
-    invalidateFilter();
 }
 
 void PaletteFilter::setIds(const QVariantList &ids)
 {
-    m_ids.clear();
-    for (const QVariant &v : ids) m_ids.insert(v.toInt());
-    invalidateFilter();
+    QSet<int> newIds;
+    newIds.reserve(ids.size());
+    for (const QVariant &v : ids) newIds.insert(v.toInt());
+
+    const bool idsChanged = m_ids != newIds;
+    const bool modeWasChanged = m_mode != QLatin1String("ids");
+    if (!idsChanged && !modeWasChanged) return;
+
+    beginFilterChange();
+    m_ids = std::move(newIds);
+    if (modeWasChanged) {
+        m_mode = QStringLiteral("ids");
+    }
+    endFilterChange(Direction::Rows);
+    if (modeWasChanged) emit modeChanged();
 }
 
 int PaletteFilter::rowForServerId(int serverId) const

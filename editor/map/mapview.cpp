@@ -28,6 +28,11 @@ MapView::MapView(QQuickItem *parent)
     setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton | Qt::MiddleButton);
     setAcceptHoverEvents(true);
     m_effectClock.start();
+    // Dlawik emisji hoverChanged (statusbar) - patrz updateHoverText().
+    m_hoverEmitTimer = new QTimer(this);
+    m_hoverEmitTimer->setSingleShot(true);
+    m_hoverEmitTimer->setInterval(50);
+    connect(m_hoverEmitTimer, &QTimer::timeout, this, [this] { emit hoverChanged(); });
     startWorker();
 }
 
@@ -57,13 +62,51 @@ void MapView::animTick()
 {
     ++m_animFrame;
 
-    clearChunkQuadCache();
-    ++m_dataVersion;
+    const int tileSize = std::max(1, m_tileSize);
+    constexpr int spillTiles = 4;
+    const int minChunkX = floorDiv(
+        static_cast<int>(std::floor(m_originX)) - spillTiles, kChunkTiles);
+    const int minChunkY = floorDiv(
+        static_cast<int>(std::floor(m_originY)) - spillTiles, kChunkTiles);
+    const int maxChunkX = floorDiv(
+        static_cast<int>(std::ceil(m_originX + width() / tileSize)) + 1, kChunkTiles);
+    const int maxChunkY = floorDiv(
+        static_cast<int>(std::ceil(m_originY + height() / tileSize)) + 1, kChunkTiles);
+    const int bottomFloor = renderBottomFloor();
+
+    // Only invalidate animated chunks that can contribute to the current view.
+    // Keeping off-screen floors cached prevents a full asynchronous rebuild when
+    // returning from underground to the surface.
+    bool any = false;
+    {
+        std::lock_guard<std::mutex> lk(m_quadMutex);
+        for (int z = m_floor; z <= bottomFloor; ++z) {
+            auto animatedIt = m_animChunks.constFind(z);
+            if (animatedIt == m_animChunks.cend()) continue;
+
+            auto cacheIt = m_quadCache.find(z);
+            auto versionIt = m_chunkVer.find(z);
+            for (int cy = minChunkY; cy <= maxChunkY; ++cy) {
+                for (int cx = minChunkX; cx <= maxChunkX; ++cx) {
+                    const quint64 key = chunkKey(cx, cy);
+                    if (!animatedIt->contains(key)) continue;
+                    if (cacheIt != m_quadCache.end() && cacheIt->remove(key)) {
+                        if (versionIt != m_chunkVer.end()) versionIt->remove(key);
+                        any = true;
+                    }
+                }
+            }
+        }
+    }
+    if (!any) return;
+
+    m_quadCacheVer.fetch_add(1, std::memory_order_relaxed);
     emit contentUpdated(); update();
 }
 
 void MapView::setShowLowerFloors(bool on)
 {
+    if (m_ingamePreview) return;
     if (m_showLowerFloors == on) return;
     m_showLowerFloors = on;
     m_lightChunks.clear();
@@ -131,9 +174,12 @@ void MapView::setSpr(SprReader *reader)
 
 void MapView::setFloor(int floor)
 {
+    if (m_ingamePreview) return;
     floor = std::clamp(floor, 0, 15);
     if (m_floor == floor) return;
     m_floor = floor;
+    if (m_movingSel)
+        m_moveMoved = m_moveMoved || m_floor != m_moveSrcZ;
     emit floorChanged();
     m_spawnIndex.invalidate();
     m_lightChunks.clear();
@@ -144,6 +190,7 @@ void MapView::setFloor(int floor)
 
 void MapView::setTileSize(int size)
 {
+    if (m_ingamePreview) return;
     size = std::clamp(size, 1, 256);
     if (m_tileSize == size) return;
     m_tileSize = size;
@@ -312,12 +359,20 @@ void MapView::applyBrushServerId(int serverId, bool asBrush)
 
 void MapView::onMapLoaded()
 {
+    if (m_ingamePreview) setIngamePreview(false);
 
+    const bool reportProgress = m_otbm && m_otbm->isLoading() && m_otbm->isLoaded();
+    if (reportProgress)
+        m_otbm->reportLoadingProgress(72, QStringLiteral("Indexing visible floors..."));
     rebuildFloorIndex();
+    if (reportProgress)
+        m_otbm->reportLoadingProgress(74, QStringLiteral("Building sprite atlas..."));
     {
         std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
         buildAtlasImage();
     }
+    if (reportProgress)
+        m_otbm->reportLoadingProgress(75, QStringLiteral("Preparing map canvas..."));
     clearChunkQuadCache();
     m_atlasDirty = true;
     m_floorDirty = true;
@@ -329,11 +384,13 @@ void MapView::onMapLoaded()
 void MapView::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
+    if (m_ingamePreview) centerPreviewCamera();
     emit contentUpdated(); update();
 }
 
 void MapView::centerOnContent()
 {
+    if (m_ingamePreview) return;
     updateCurrentFloor();
     if (m_floorChunkTiles.isEmpty()) {
         m_originX = 0;

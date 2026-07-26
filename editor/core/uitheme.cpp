@@ -11,15 +11,15 @@ const char *kTintKey = "ui/tint";
 const char *kStyleKey = "ui/style";
 
 namespace flat {
-const QColor bg       ("#161b22");
-const QColor bgDeep   ("#0d1117");
-const QColor button   ("#21262d");
-const QColor hover    ("#262c36");
-const QColor pressed  ("#1b1f24");
-const QColor titleBar ("#1c2128");
-const QColor border   ("#30363d");
-const QColor accent   ("#2d4a77");
-const QColor glyph    ("#8b949e");
+const QColor bg       ("#3c3c3c");
+const QColor bgDeep   ("#343434");
+const QColor button   ("#464646");
+const QColor hover    ("#505050");
+const QColor pressed  ("#343434");
+const QColor titleBar ("#343434");
+const QColor border   ("#646464");
+const QColor accent   ("#b8b8b8");
+const QColor glyph    ("#b8b8b8");
 }
 
 struct Preset { const char *name; const char *color; };
@@ -48,7 +48,10 @@ UiTheme::UiTheme(QObject *parent)
     }
     m_style = QSettings().value(QLatin1String(kStyleKey),
                                 QStringLiteral("classic")).toString();
-    if (m_style != QLatin1String("flat")) m_style = QStringLiteral("classic");
+    if (m_style == QLatin1String("flat"))
+        m_style = QStringLiteral("github-dark");
+    if (m_style != QLatin1String("github-dark"))
+        m_style = QStringLiteral("classic");
 }
 
 QString UiTheme::style() const
@@ -59,7 +62,9 @@ QString UiTheme::style() const
 
 void UiTheme::setStyle(const QString &s)
 {
-    const QString v = (s == QLatin1String("flat")) ? s : QStringLiteral("classic");
+    const QString v = (s == QLatin1String("github-dark"))
+                          ? s
+                          : QStringLiteral("classic");
     {
         QMutexLocker lock(&m_mutex);
         if (m_style == v) return;
@@ -77,8 +82,8 @@ QVariantList UiTheme::styles() const
     classic.insert(QStringLiteral("name"), QStringLiteral("Classic UI"));
     classic.insert(QStringLiteral("id"), QStringLiteral("classic"));
     QVariantMap dark;
-    dark.insert(QStringLiteral("name"), QStringLiteral("Dark UI"));
-    dark.insert(QStringLiteral("id"), QStringLiteral("flat"));
+    dark.insert(QStringLiteral("name"), QStringLiteral("GitHub Dark"));
+    dark.insert(QStringLiteral("id"), QStringLiteral("github-dark"));
     out.push_back(classic);
     out.push_back(dark);
     return out;
@@ -200,10 +205,13 @@ QImage UiTheme::texture(const QString &file) const
         style = m_style;
     }
 
-    QImage img = (style == QLatin1String("flat"))
+    QImage img = (style == QLatin1String("github-dark"))
                      ? flatTexture(file)
                      : QImage(QStringLiteral(":/ui/") + file);
     if (img.isNull()) {
+        return img;
+    }
+    if (style == QLatin1String("github-dark")) {
         return img;
     }
     if (t == QColor(Qt::white)) {

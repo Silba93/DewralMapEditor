@@ -1,3 +1,4 @@
+import Tibia 1.0
 import QtQuick
 import QtQuick.Controls
 
@@ -15,9 +16,12 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#2b2b2b"
+        radius: Backend.uiTheme.style === "github-dark" ? 6 : 0
+        color: Backend.uiTheme.style === "github-dark" ? "#0D1117" : "#2b2b2b"
         border.width: 1
-        border.color: root.open || mouseArea.containsMouse ? "#4a90e2" : "#555"
+        border.color: Backend.uiTheme.style === "github-dark"
+                      ? (root.open || mouseArea.containsMouse ? "#8B949E" : "#30363D")
+                      : (root.open || mouseArea.containsMouse ? "#4a90e2" : "#555")
     }
 
     Text {
@@ -28,7 +32,7 @@ Item {
             verticalCenter: parent.verticalCenter
         }
         text: root.currentText
-        color: "#e8e8e8"
+        color: Backend.uiTheme.style === "github-dark" ? "#C9D1D9" : "#e8e8e8"
         font.pixelSize: 12
         elide: Text.ElideRight
     }
@@ -45,7 +49,7 @@ Item {
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
-            ctx.fillStyle = "#c0c0c0";
+            ctx.fillStyle = Backend.uiTheme.style === "github-dark" ? "#8B949E" : "#c0c0c0";
             ctx.beginPath();
             ctx.moveTo(0, 3);
             ctx.lineTo(10, 3);
@@ -75,9 +79,10 @@ Item {
         dim: false
 
         background: Rectangle {
-            color: "#2b2b2b"
+            radius: Backend.uiTheme.style === "github-dark" ? 6 : 0
+            color: Backend.uiTheme.style === "github-dark" ? "#161B22" : "#2b2b2b"
             border.width: 1
-            border.color: "#555"
+            border.color: Backend.uiTheme.style === "github-dark" ? "#30363D" : "#555"
         }
 
         contentItem: ListView {
@@ -88,7 +93,10 @@ Item {
             delegate: Rectangle {
                 width: listView.width
                 height: 22
-                color: entryArea.containsMouse ? "#20ffffff" : "transparent"
+                radius: Backend.uiTheme.style === "github-dark" ? 4 : 0
+                color: entryArea.containsMouse
+                       ? (Backend.uiTheme.style === "github-dark" ? "#21262D" : "#20ffffff")
+                       : "transparent"
                 Text {
                     anchors {
                         left: parent.left
@@ -96,7 +104,7 @@ Item {
                         verticalCenter: parent.verticalCenter
                     }
                     text: modelData
-                    color: "#e8e8e8"
+                    color: Backend.uiTheme.style === "github-dark" ? "#C9D1D9" : "#e8e8e8"
                     font.pixelSize: 12
                 }
                 MouseArea {

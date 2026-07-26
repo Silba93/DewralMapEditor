@@ -1,6 +1,8 @@
 #include "nodefilereader.h"
 
 #include <QFile>
+#include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -102,11 +104,16 @@ qsizetype BinaryNode::bytesRemaining() const
     return m_readOffset < m_data.size() ? m_data.size() - m_readOffset : 0;
 }
 
-bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &acceptedIdentifiers)
+bool NodeFileReader::loadFile(const QString &path,
+                              const QVector<QByteArray> &acceptedIdentifiers,
+                              ProgressCallback progressCallback)
 {
     m_root = BinaryNode();
     m_ok = false;
     m_errorString.clear();
+    m_progressCallback = std::move(progressCallback);
+    m_lastProgressPosition = 0;
+    reportProgress(0, 1);
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -147,6 +154,7 @@ bool NodeFileReader::loadFile(const QString &path, const QVector<QByteArray> &ac
     }
 
     m_ok = true;
+    reportProgress(data.size(), data.size());
     return true;
 }
 
@@ -158,6 +166,7 @@ bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNod
     }
 
     while (pos < data.size()) {
+        reportProgress(pos, data.size());
         uint8_t byte = static_cast<uint8_t>(data.at(pos));
         ++pos;
 
@@ -185,6 +194,20 @@ bool NodeFileReader::parseNode(const QByteArray &data, qsizetype &pos, BinaryNod
 
     setError(QStringLiteral("Unexpected end of node file"));
     return false;
+}
+
+void NodeFileReader::reportProgress(qsizetype position, qsizetype total)
+{
+    if (!m_progressCallback || total <= 0) {
+        return;
+    }
+    constexpr qsizetype kReportInterval = 64 * 1024;
+    if (position < total && position - m_lastProgressPosition < kReportInterval) {
+        return;
+    }
+    m_lastProgressPosition = position;
+    m_progressCallback(std::clamp(static_cast<double>(position) / static_cast<double>(total),
+                                  0.0, 1.0));
 }
 
 bool NodeFileReader::parseChildNodes(const QByteArray &data, qsizetype &pos, BinaryNode &node, int depth)

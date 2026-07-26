@@ -1,4 +1,9 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
+
+# Dependency setup is handled explicitly by CMakePresets.json. Prevent Qt
+# Creator from injecting a second, unrelated vcpkg toolchain into local kits.
+set(QT_CREATOR_SKIP_VCPKG_SETUP ON CACHE BOOL
+    "Disable Qt Creator package-manager auto setup" FORCE)
 
 project(DewralMapEditor LANGUAGES CXX)
 
@@ -80,6 +85,11 @@ add_executable(DewralMapEditor
     editor/resources.qrc
 )
 
+if(WIN32)
+    enable_language(RC)
+    target_sources(DewralMapEditor PRIVATE editor/windows/DME.rc)
+endif()
+
 qt_add_qml_module(DewralMapEditor
     URI Tibia
     VERSION 1.0
@@ -130,14 +140,29 @@ if(WIN32)
     find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin_dir}")
     if(WINDEPLOYQT_EXE)
         add_custom_command(TARGET DewralMapEditor POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXE}"
-                    --qmldir "${CMAKE_SOURCE_DIR}/editor/qml"
-                    --no-translations
-                    "$<TARGET_FILE:DewralMapEditor>"
-            COMMENT "windeployqt: biblioteki Qt + moduly QML obok DME.exe"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DWINDEPLOYQT_EXECUTABLE=${WINDEPLOYQT_EXE}"
+                    "-DQML_SOURCE_DIRECTORY=${CMAKE_SOURCE_DIR}/editor/qml"
+                    "-DAPPLICATION_FILE=$<TARGET_FILE:DewralMapEditor>"
+                    "-DAPPLICATION_DIRECTORY=$<TARGET_FILE_DIR:DewralMapEditor>"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/DeployQtRuntime.cmake"
+            COMMENT "Deploying the minimal Qt runtime next to DME.exe"
             VERBATIM)
     else()
         message(WARNING "windeployqt was not found - the release executable may not start "
                         "outside Qt Creator (QML modules are missing). Run windeployqt manually.")
     endif()
+endif()
+
+if(WIN32)
+    add_custom_target(package_release
+        DEPENDS DewralMapEditor
+        COMMAND "${CMAKE_COMMAND}"
+                "-DDEPLOYED_DIRECTORY=$<TARGET_FILE_DIR:DewralMapEditor>"
+                "-DRELEASE_ROOT=${CMAKE_SOURCE_DIR}/release"
+                "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}"
+                "-DSTRIP_EXECUTABLE=${CMAKE_STRIP}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/CreateReleasePackage.cmake"
+        COMMENT "Creating the production Windows release package"
+        VERBATIM)
 endif()

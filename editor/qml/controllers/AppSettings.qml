@@ -10,7 +10,9 @@ Settings {
     property bool showStartup: true
     property int glMaxFps: 60
     property bool glMaxFpsConfigured: false
-    property int paletteWidth: 210
+    property bool vsyncEnabled: true
+    property int paletteWidth: 390
     property bool paletteCollapsed: false
     property int iconSize: 66
+    property bool githubLayoutV2Initialized: false
 }

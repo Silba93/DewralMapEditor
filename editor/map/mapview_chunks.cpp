@@ -73,7 +73,8 @@ bool MapView::chunkHasContent(quint64 key) const
     return false;
 }
 
-void MapView::appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) const
+void MapView::appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out,
+                              bool *animated) const
 {
 
     int topIdx = -1;
@@ -103,6 +104,7 @@ void MapView::appendItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out) c
         const int ox = ci->has_offset ? ci->offset_x : 0;
         const int oy = ci->has_offset ? ci->offset_y : 0;
 
+        if (animated && ci->frames > 1) *animated = true;
         const int fr = itemFrame(ci);
 
         for (int l = 0; l < layers; ++l)
@@ -196,7 +198,8 @@ void MapView::appendTopItemQuads(const OtbmTile *tile, std::vector<QuadRef> &out
     for (const QuadRef &q : topQuads) out.push_back(q);
 }
 
-void MapView::collectFloorChunkQuads(int z, quint64 key, std::vector<QuadRef> &out)
+void MapView::collectFloorChunkQuads(int z, quint64 key, std::vector<QuadRef> &out,
+                                     bool *animated)
 {
     auto zit = m_floorChunkTiles.find(z);
     if (zit == m_floorChunkTiles.end()) return;
@@ -209,7 +212,7 @@ void MapView::collectFloorChunkQuads(int z, quint64 key, std::vector<QuadRef> &o
                   return a->y != b->y ? a->y < b->y : a->x < b->x;
               });
     for (const OtbmTile *tile : tiles)
-        appendItemQuads(tile, out);
+        appendItemQuads(tile, out, animated);
 }
 
 void MapView::startWorker()
@@ -241,15 +244,16 @@ void MapView::workerLoop()
         }
 
         std::vector<QuadRef> quads;
+        bool animated = false;
         bool stored = false;
         {
             std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
             if (m_workerStop) return;
             if (req.generation == m_chunkTaskGeneration.load(std::memory_order_acquire)) {
-                collectFloorChunkQuads(req.z, req.key, quads);
+                collectFloorChunkQuads(req.z, req.key, quads, &animated);
 
                 if (req.generation == m_chunkTaskGeneration.load(std::memory_order_acquire)) {
-                    storeChunkQuads(req.z, req.key, std::move(quads));
+                    storeChunkQuads(req.z, req.key, std::move(quads), animated);
                     stored = true;
                 }
             }
@@ -286,7 +290,7 @@ std::shared_ptr<const std::vector<MapView::QuadRef>> MapView::takeChunkQuads(int
     return it.value();
 }
 
-void MapView::storeChunkQuads(int z, quint64 key, std::vector<QuadRef> &&q)
+void MapView::storeChunkQuads(int z, quint64 key, std::vector<QuadRef> &&q, bool animated)
 {
     {
         std::lock_guard<std::mutex> lk(m_quadMutex);
@@ -296,6 +300,12 @@ void MapView::storeChunkQuads(int z, quint64 key, std::vector<QuadRef> &&q)
         if (++m_chunkVerCounter == 0 || m_chunkVerCounter == kChunkPending)
             m_chunkVerCounter = 1;
         m_chunkVer[z][key] = m_chunkVerCounter;
+
+        // Czlonkostwo w zbiorze animowanych chunkow odswiezane przy KAZDYM
+        // przeliczeniu - edycja mogla dodac/usunac ostatni animowany item.
+        if (animated) m_animChunks[z].insert(key);
+        else if (auto ait = m_animChunks.find(z); ait != m_animChunks.end())
+            ait->remove(key);
     }
     m_quadCacheVer.fetch_add(1, std::memory_order_relaxed);
 }
@@ -351,7 +361,13 @@ void MapView::clearChunkQuadCache()
         m_reqQueue.clear();
         m_reqPending.clear();
     }
-    std::lock_guard<std::mutex> lk(m_quadMutex);
-    m_quadCache.clear();
-    m_chunkVer.clear();
+    {
+        std::lock_guard<std::mutex> lk(m_quadMutex);
+        m_quadCache.clear();
+        m_chunkVer.clear();
+        m_animChunks.clear();
+    }
+    // Jak przy kazdej inwalidacji: renderer pomija petle chunkow w sync, gdy
+    // wersja cache sie nie zmienila.
+    m_quadCacheVer.fetch_add(1, std::memory_order_relaxed);
 }

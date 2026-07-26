@@ -207,7 +207,11 @@ QtObject {
             return false;
 
         if (loadedClientKey === key && loadedClientFolder === folder)
+        {
+            if (Backend.otbmReader.loading)
+                Backend.otbmReader.reportLoadingProgress(96, "Client data already loaded...");
             return true;
+        }
 
         var hasOtfi = Backend.otfiReader.loadFromFolder(folder);
         var datFile = hasOtfi ? folder + "/" + Backend.otfiReader.metadataFile : files.dat;
@@ -215,10 +219,16 @@ QtObject {
 
         Backend.datReader.clientVersion = version;
         Backend.datReader.setOtfiOverrides(hasOtfi, Backend.otfiReader.extended, Backend.otfiReader.frameDurations, Backend.otfiReader.frameGroups);
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.reportLoadingProgress(78, "Loading item definitions...");
         var datOk = Backend.datReader.loadFile(datFile, 0);
         var extendedSpr = hasOtfi ? Backend.otfiReader.extended : version >= 960;
         var alphaSpr = hasOtfi ? Backend.otfiReader.transparency : false;
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.reportLoadingProgress(83, "Loading item sprites...");
         var sprOk = Backend.sprReader.loadFile(sprFile, 0, extendedSpr, alphaSpr);
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.reportLoadingProgress(88, "Loading server items...");
         var otbOk = Backend.otbReader.loadFile(files.otb);
 
         if (!datOk || !sprOk || !otbOk) {
@@ -232,8 +242,14 @@ QtObject {
         loadedClientVersion = version;
         loadedClientKey = key;
         loadedClientFolder = folder;
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.reportLoadingProgress(92, "Loading editor palettes...");
         loadProfileData(key);
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.reportLoadingProgress(95, "Rebuilding sprite atlas...");
         mapView.rebuildAtlas();
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.reportLoadingProgress(98, "Finalizing map...");
         return true;
     }
 }

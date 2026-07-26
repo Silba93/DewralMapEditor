@@ -1,3 +1,4 @@
+import Tibia 1.0
 import QtQuick
 import QtQuick.Controls
 
@@ -13,7 +14,7 @@ TibiaDialog {
         Text {
             width: root.width - 24
             text: root.message
-            color: "#c0c0c0"
+            color: Backend.uiTheme.style === "github-dark" ? "#C9D1D9" : "#c0c0c0"
             font.pixelSize: 12
             wrapMode: Text.WordWrap
         }
@@ -24,6 +25,7 @@ TibiaDialog {
             TibiaButton {
                 text: "Yes"
                 width: 90
+                variant: "primary"
                 onClicked: {
                     root.accepted();
                     root.close();

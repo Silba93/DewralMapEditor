@@ -102,6 +102,8 @@ Item {
             return false;
 
         if (!profiles.ensureClientLoaded(Backend.otbmReader, preferredProfileKey)) {
+            if (Backend.otbmReader.loading)
+                Backend.otbmReader.finishLoading(false);
             pendingMapPath = mapPath;
             var detectedVersion = Backend.otbmReader.suggestedClientVersion() > 0 ? Backend.otbmReader.suggestedClientVersion() : 772;
             var requestedKey = preferredProfileKey === undefined || preferredProfileKey === null ? "" : String(preferredProfileKey);
@@ -115,6 +117,8 @@ Item {
 
         profiles.rememberMapProfile(mapPath, profiles.loadedClientKey);
         addRecent(mapPath);
+        if (Backend.otbmReader.loading)
+            Backend.otbmReader.finishLoading(true);
         started = true;
         return true;
     }

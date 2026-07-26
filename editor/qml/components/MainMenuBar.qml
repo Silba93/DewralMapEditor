@@ -22,11 +22,12 @@ TibiaMenuBar {
     required property var themeDialog
     required property var borderizeConfirm
     required property var randomizeConfirm
+    property int menuLeftInset: 4
 
     anchors.verticalCenter: menuBar.titleBarItem.verticalCenter
     anchors.verticalCenterOffset: -4
     anchors.left: menuBar.titleBarItem.left
-    anchors.leftMargin: 4
+    anchors.leftMargin: menuBar.menuLeftInset
 
     TibiaMenu {
         title: "File"
@@ -383,6 +384,12 @@ TibiaMenuBar {
             checked: menuBar.mapView.showGrid
             onTriggered: menuBar.mapView.showGrid = !menuBar.mapView.showGrid
         }
+        Action {
+            text: "Show wall outlines"
+            checkable: true
+            checked: menuBar.mapView.showWallOutlines
+            onTriggered: menuBar.mapView.showWallOutlines = !menuBar.mapView.showWallOutlines
+        }
 
         Action {
             text: "Show creatures  (F)"
@@ -440,7 +447,7 @@ TibiaMenuBar {
         }
         MenuSeparator {}
         Action {
-            text: "UI Theme..."
+            text: "Appearance..."
             onTriggered: menuBar.themeDialog.open()
         }
         MenuSeparator {}
@@ -464,6 +471,12 @@ TibiaMenuBar {
                 onObjectRemoved: (index, object) => fpsMenu.removeItem(object)
             }
         }
+        Action {
+            text: "V-Sync"
+            checkable: true
+            checked: menuBar.settings.vsyncEnabled
+            onTriggered: menuBar.settings.vsyncEnabled = !menuBar.settings.vsyncEnabled
+        }
 
         TibiaMenu {
             id: undoMenu
@@ -480,4 +493,5 @@ TibiaMenuBar {
             }
         }
     }
+
 }

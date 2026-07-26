@@ -13,15 +13,17 @@ Menu {
         implicitWidth: 150
         Image {
             anchors.fill: parent
+            visible: Backend.uiTheme.style !== "github-dark"
             source: (Backend.uiTheme.tex + "texture.png")
             fillMode: Image.Tile
             smooth: false
         }
         Rectangle {
             anchors.fill: parent
-            color: "transparent"
+            radius: Backend.uiTheme.style === "github-dark" ? 6 : 0
+            color: Backend.uiTheme.style === "github-dark" ? "#10151C" : "transparent"
             border.width: 1
-            border.color: "#6e6e6e"
+            border.color: Backend.uiTheme.style === "github-dark" ? "#2D3743" : "#6e6e6e"
         }
     }
 
@@ -40,7 +42,9 @@ Menu {
                 anchors.leftMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
                 text: menuItem.text
-                color: !menuItem.enabled ? "#777" : (menuItem.highlighted ? "#eaffea" : "#dcdcdc")
+                color: Backend.uiTheme.style === "github-dark"
+                       ? (!menuItem.enabled ? "#6E7681" : (menuItem.highlighted ? "#FFFFFF" : "#C9D1D9"))
+                       : (!menuItem.enabled ? "#777" : (menuItem.highlighted ? "#eaffea" : "#dcdcdc"))
                 font.pixelSize: 12
                 verticalAlignment: Text.AlignVCenter
             }
@@ -49,17 +53,21 @@ Menu {
         arrow: Text {
             visible: menuItem.subMenu !== null
             text: ">"
-            color: menuItem.highlighted ? "#eaffea" : "#999"
+            color: Backend.uiTheme.style === "github-dark"
+                   ? (menuItem.highlighted ? "#FFFFFF" : "#8B949E")
+                   : (menuItem.highlighted ? "#eaffea" : "#999")
             font.pixelSize: 10
             anchors.right: parent.right
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
         }
         background: Rectangle {
-
-            color: menuItem.highlighted ? "#807a7d82" : "transparent"
+            radius: Backend.uiTheme.style === "github-dark" ? 4 : 0
+            color: menuItem.highlighted
+                   ? (Backend.uiTheme.style === "github-dark" ? "#1B2632" : "#807a7d82")
+                   : "transparent"
             border.width: menuItem.highlighted ? 1 : 0
-            border.color: "#9a9a9a"
+            border.color: Backend.uiTheme.style === "github-dark" ? "#3A4655" : "#9a9a9a"
         }
     }
 }

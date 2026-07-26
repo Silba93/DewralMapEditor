@@ -6,7 +6,7 @@ import "../style"
 TibiaDialog {
     id: root
 
-    title: "UI Theme"
+    title: "Appearance"
     width: 320
 
     readonly property color draft: Qt.rgba(rField.value / 255, gField.value / 255, bField.value / 255, 1)
@@ -23,7 +23,7 @@ TibiaDialog {
 
         Text {
             text: "Application style"
-            color: "#999"
+            color: Backend.uiTheme.style === "github-dark" ? "#B8B8B8" : "#999"
             font.pixelSize: 11
         }
         TibiaComboBox {
@@ -42,19 +42,32 @@ TibiaDialog {
             onActivated: Backend.uiTheme.style = Backend.uiTheme.styles[currentIndex].id
         }
 
+        Text {
+            width: parent.width - 24
+            text: Backend.uiTheme.style === "github-dark"
+                  ? "Modern GitHub/Codex-inspired layout. Uses separate QML components while keeping the same editor actions."
+                  : "Original Tibia-inspired layout and textured controls."
+            color: Backend.uiTheme.style === "github-dark" ? "#8A8A8A" : "#8b949e"
+            font.pixelSize: 10
+            wrapMode: Text.WordWrap
+        }
+
         TibiaSeparator {
             width: parent.width - 24
+            visible: Backend.uiTheme.style === "classic"
         }
 
         Text {
             text: "Presets"
             color: "#999"
             font.pixelSize: 11
+            visible: Backend.uiTheme.style === "classic"
         }
 
         Grid {
             columns: 4
             spacing: 4
+            visible: Backend.uiTheme.style === "classic"
             Repeater {
                 model: Backend.uiTheme.presets
                 delegate: TibiaButton {
@@ -71,16 +84,19 @@ TibiaDialog {
 
         TibiaSeparator {
             width: parent.width - 24
+            visible: Backend.uiTheme.style === "classic"
         }
 
         Text {
             text: "Custom color (RGB)"
             color: "#999"
             font.pixelSize: 11
+            visible: Backend.uiTheme.style === "classic"
         }
 
         Row {
             spacing: 6
+            visible: Backend.uiTheme.style === "classic"
             Text {
                 text: "R"
                 color: "#999"
@@ -121,6 +137,7 @@ TibiaDialog {
 
         Row {
             spacing: 6
+            visible: Backend.uiTheme.style === "classic"
             Text {
                 text: "Preview"
                 color: "#999"
@@ -151,6 +168,7 @@ TibiaDialog {
             TibiaButton {
                 text: "Apply"
                 width: 90
+                visible: Backend.uiTheme.style === "classic"
                 onClicked: Backend.uiTheme.tint = root.draft
             }
             TibiaButton {

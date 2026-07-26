@@ -21,10 +21,29 @@ void MinimapView::setSource(MapView *s)
     m_source = s;
     if (m_source) {
 
-        connect(m_source, &MapView::contentUpdated, this, [this] { update(); });
+        connect(m_source, &MapView::contentUpdated, this, [this] { maybeRepaint(); });
         connect(m_source, &MapView::floorChanged, this, [this] { update(); });
     }
     emit sourceChanged();
+    update();
+}
+
+void MinimapView::maybeRepaint()
+{
+    if (!m_source) return;
+    // Bitmapa minimapy (wersja rosnie przy edycji kafla / rebuildzie) albo widok
+    // (pan/zoom/rozmiar -> ramka viewportu) - tylko te zmiany widac na minimapie.
+    // Czysty hover myszy nie zmienia zadnej z tych wartosci -> zero repaintow.
+    const quint32 ver = m_source->minimapVersion();
+    const double ox = m_source->glOriginX(), oy = m_source->glOriginY();
+    const int ts = m_source->tileSize(), fl = m_source->floor();
+    const double w = m_source->width(), h = m_source->height();
+    if (ver == m_paintedVer && ox == m_lastOx && oy == m_lastOy
+        && ts == m_lastTs && fl == m_lastFloor && w == m_lastW && h == m_lastH)
+        return;
+    m_lastOx = ox; m_lastOy = oy;
+    m_lastTs = ts; m_lastFloor = fl;
+    m_lastW = w; m_lastH = h;
     update();
 }
 

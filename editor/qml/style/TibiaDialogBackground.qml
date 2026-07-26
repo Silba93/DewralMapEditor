@@ -1,19 +1,36 @@
 import Tibia 1.0
 import QtQuick
 
-BorderImage {
+Item {
+    id: root
     property int topBorder: 27
-
     property url frameSource: (Backend.uiTheme.tex + "popupwindow.png")
-    source: frameSource
-    smooth: false
-    border {
-        left: 6
-        right: 6
-        top: topBorder
-        bottom: 6
+    readonly property bool githubUi: Backend.uiTheme.style === "github-dark"
+
+    Rectangle {
+        anchors.fill: parent
+        visible: root.githubUi
+        radius: 7
+        color: "#161B22"
+        border {
+            width: 1
+            color: "#30363D"
+        }
     }
 
-    horizontalTileMode: BorderImage.Repeat
-    verticalTileMode: BorderImage.Repeat
+    BorderImage {
+        anchors.fill: parent
+        visible: !root.githubUi
+        source: root.frameSource
+        smooth: false
+        border {
+            left: 6
+            right: 6
+            top: root.topBorder
+            bottom: 6
+        }
+
+        horizontalTileMode: BorderImage.Repeat
+        verticalTileMode: BorderImage.Repeat
+    }
 }

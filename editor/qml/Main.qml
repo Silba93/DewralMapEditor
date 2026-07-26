@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Window
 import QtQuick.Dialogs
 import Tibia 1.0
@@ -8,9 +9,13 @@ import "dialogs"
 import "style"
 import "controllers"
 import "components"
+import "themes/github"
 
 Window {
     id: root
+    readonly property bool githubUi: Backend.uiTheme.style === "github-dark"
+    readonly property int topBarHeight: githubUi ? 56 : 45
+
     visible: app.started
     width: 1000
     height: 680
@@ -30,9 +35,22 @@ Window {
 
     TibiaDialogBackground {
         anchors.fill: parent
+        visible: !root.githubUi
 
         frameSource: (Backend.uiTheme.tex + "popupwindow_tall.png")
         topBorder: 45
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: root.githubUi
+        radius: root.visibility === Window.Maximized ? 0 : 6
+        antialiasing: true
+        color: "#0D1117"
+        border {
+            width: 1
+            color: "#242D38"
+        }
     }
 
     Item {
@@ -41,15 +59,35 @@ Window {
             left: parent.left
             right: parent.right
             top: parent.top
-            leftMargin: 6
-            rightMargin: 6
+            topMargin: root.githubUi ? 1 : 0
+            leftMargin: root.githubUi ? 1 : 6
+            rightMargin: root.githubUi ? 1 : 6
         }
 
-        height: 45
+        height: root.topBarHeight
+
+        Rectangle {
+            anchors.fill: parent
+            visible: root.githubUi
+            radius: root.visibility === Window.Maximized ? 0 : 6
+            antialiasing: true
+            color: "#0D1117"
+
+            Rectangle {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                height: 1
+                color: "#212A35"
+            }
+        }
 
         Text {
             id: titleText
 
+            visible: !root.githubUi
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.verticalCenter: parent.verticalCenter
             anchors.verticalCenterOffset: -5
@@ -62,79 +100,60 @@ Window {
             width: Math.max(0, Math.min(implicitWidth, parent.width - 2 * (menuBar.width + 24)))
         }
 
+        Text {
+            id: githubTitleText
+            visible: root.githubUi
+            anchors.centerIn: parent
+            text: "Dewral Map Editor"
+            color: "#E6EDF3"
+            font {
+                pixelSize: 14
+                weight: Font.DemiBold
+            }
+            z: 2
+        }
+
         Row {
             id: winButtons
             anchors {
                 right: parent.right
-                rightMargin: 6
-                verticalCenter: titleText.verticalCenter
+                top: parent.top
+                bottom: parent.bottom
             }
-            spacing: 10
+            spacing: 0
+            z: 5
 
-            Text {
-                text: "_"
-                color: minArea.containsMouse ? "#eaffea" : "#999"
-                font.pixelSize: 13
-                font.bold: true
-                MouseArea {
-                    id: minArea
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.showMinimized()
-                }
+            GithubWindowButton {
+                height: parent.height
+                controlType: "minimize"
+                onTriggered: root.showMinimized()
             }
-            Text {
 
-                text: root.visibility === Window.Maximized ? "[]" : "[ ]"
-                color: maxArea.containsMouse ? "#eaffea" : "#999"
-                font.pixelSize: 13
-                font.bold: true
-                MouseArea {
-                    id: maxArea
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.visibility === Window.Maximized ? root.showNormal() : root.showMaximized()
-                }
+            GithubWindowButton {
+                height: parent.height
+                controlType: "maximize"
+                maximized: root.visibility === Window.Maximized
+                onTriggered: root.visibility === Window.Maximized ? root.showNormal() : root.showMaximized()
             }
-            Text {
-                text: "X"
-                color: closeArea.containsMouse ? "#eaffea" : "#999"
-                font.pixelSize: 13
-                font.bold: true
-                MouseArea {
-                    id: closeArea
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: app.requestAppClose()
-                }
+
+            GithubWindowButton {
+                height: parent.height
+                controlType: "close"
+                onTriggered: app.requestAppClose()
             }
         }
 
         MouseArea {
+            id: titleDragArea
             anchors.fill: parent
-            anchors.rightMargin: 70
+            anchors {
+                leftMargin: root.githubUi ? 410 : 0
+                rightMargin: root.githubUi ? 138 : 138
+            }
+            z: 0
             onPressed: root.startSystemMove()
 
             onDoubleClicked: root.visibility === Window.Maximized ? root.showNormal() : root.showMaximized()
-        }
-    }
-
-    property int frameCount: 0
-    property int fps: 0
-    onFrameSwapped: frameCount++
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        onTriggered: {
-            root.fps = root.frameCount;
-            root.frameCount = 0;
         }
     }
 
@@ -154,10 +173,18 @@ Window {
         appCloseConfirm: appCloseConfirm
     }
 
-    Component.onCompleted: app.initialize()
+    Component.onCompleted: {
+        if (!prefs.githubLayoutV2Initialized) {
+            prefs.paletteWidth = 390;
+            prefs.githubLayoutV2Initialized = true;
+        }
+        app.initialize();
+    }
 
     MainMenuBar {
         id: menuBar
+        menuLeftInset: root.githubUi ? 8 : 4
+        width: root.githubUi ? 400 : implicitWidth
         appController: app
         mapView: workspace.mapView
         mapGl: workspace.mapGl
@@ -195,6 +222,12 @@ Window {
         onActivated: workspace.mapView.redo()
     }
 
+    Shortcut {
+        sequence: "Ctrl+B"
+        enabled: root.githubUi && app.started
+        onActivated: prefs.paletteCollapsed = !prefs.paletteCollapsed
+    }
+
     TibiaConfirmDialog {
         id: borderizeMapConfirm
         title: "Borderize Map"
@@ -211,14 +244,22 @@ Window {
     PalettePanel {
         id: palette
         anchors.top: titleBar.bottom
+        anchors.topMargin: 0
         anchors.bottom: parent.bottom
         anchors.left: parent.left
-        anchors.leftMargin: 6
-        anchors.bottomMargin: 6
-        width: prefs.paletteCollapsed ? 0 : Math.max(160, Math.min(prefs.paletteWidth, root.width - 300))
+        anchors.leftMargin: root.githubUi ? 1 : 6
+        anchors.bottomMargin: root.githubUi ? 1 : 6
+        width: {
+            if (prefs.paletteCollapsed)
+                return 0;
+            if (root.githubUi)
+                return Math.max(260, Math.min(Math.max(prefs.paletteWidth, 260), 480));
+            return Math.max(160, Math.min(prefs.paletteWidth, root.width - 300));
+        }
         visible: !prefs.paletteCollapsed
         app: app
         mapCtrl: workspace.mapView
+        onCollapseRequested: prefs.paletteCollapsed = true
     }
 
     Item {
@@ -226,7 +267,7 @@ Window {
         anchors.top: palette.top
         anchors.bottom: palette.bottom
         anchors.left: palette.right
-        width: 6
+        width: root.githubUi ? 4 : 6
         z: 10
         visible: !prefs.paletteCollapsed
 
@@ -234,7 +275,9 @@ Window {
             anchors.centerIn: parent
             width: 1
             height: parent.height
-            color: splitterArea.containsMouse || splitterArea.pressed ? "#4a90e2" : "transparent"
+            color: splitterArea.containsMouse || splitterArea.pressed
+                   ? (root.githubUi ? "#3A4655" : "#4a90e2")
+                   : "transparent"
         }
 
         MouseArea {
@@ -251,7 +294,7 @@ Window {
             }
             onPositionChanged: mouse => {
                 if (pressed)
-                    prefs.paletteWidth = startWidth + (mapToItem(root.contentItem, mouse.x, 0).x - startX);
+                    prefs.paletteWidth = Math.max(260, Math.min(480, startWidth + (mapToItem(root.contentItem, mouse.x, 0).x - startX)));
             }
         }
     }
@@ -265,6 +308,7 @@ Window {
 
         x: prefs.paletteCollapsed ? 2 : (palette.x + palette.width)
         z: 20
+        visible: !root.githubUi
 
         Rectangle {
             anchors.fill: parent
@@ -287,26 +331,105 @@ Window {
         }
     }
 
-    EditorToolBar {
-        id: toolBar
-        anchors.top: titleBar.bottom
-        anchors.left: paletteSplitter.right
-        anchors.right: parent.right
-        anchors.leftMargin: 4
-        anchors.rightMargin: 8
-        mapView: workspace.mapView
+    Item {
+        id: githubPaletteExpand
+
+        visible: root.githubUi && prefs.paletteCollapsed
+        x: 6
+        width: visible ? 30 : 0
+        height: 54
+        anchors.verticalCenter: parent.verticalCenter
+        z: 30
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 7
+            color: githubExpandArea.containsMouse ? "#171E27" : "#111820"
+            border {
+                width: 1
+                color: githubExpandArea.containsMouse ? "#3A4655" : "#242D38"
+            }
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: ">"
+            color: githubExpandArea.containsMouse ? "#FFFFFF" : "#A7B1BC"
+            font.pixelSize: 16
+        }
+
+        MouseArea {
+            id: githubExpandArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: prefs.paletteCollapsed = false
+        }
+
+        GithubToolTip {
+            targetItem: githubExpandArea
+            targetHovered: githubExpandArea.containsMouse
+            message: "Expand palette (Ctrl+B)"
+        }
     }
 
-    DocumentTabs {
-        id: tabBar
-        anchors.top: toolBar.bottom
+    Loader {
+        id: toolBar
+        anchors.top: titleBar.bottom
+        anchors.topMargin: 0
         anchors.left: paletteSplitter.right
         anchors.right: parent.right
-        anchors.leftMargin: 4
-        anchors.rightMargin: 8
-        height: app.started ? 22 : 0
+        anchors.leftMargin: root.githubUi ? 0 : 4
+        anchors.rightMargin: root.githubUi ? 1 : 8
+
+        sourceComponent: Backend.uiTheme.style === "github-dark"
+                         ? githubToolBarComponent
+                         : classicToolBarComponent
+    }
+
+    Component {
+        id: classicToolBarComponent
+        EditorToolBar {
+            mapView: workspace.mapView
+        }
+    }
+
+    Component {
+        id: githubToolBarComponent
+        GithubEditorToolBar {
+            mapView: workspace.mapView
+        }
+    }
+
+    Loader {
+        id: tabBar
+        anchors.top: toolBar.bottom
+        anchors.topMargin: 0
+        anchors.left: paletteSplitter.right
+        anchors.right: parent.right
+        anchors.leftMargin: root.githubUi ? 0 : 4
+        anchors.rightMargin: root.githubUi ? 1 : 8
+        height: app.started ? (root.githubUi ? 42 : 22) : 0
         visible: app.started
-        app: app
+
+        sourceComponent: Backend.uiTheme.style === "github-dark"
+                         ? githubTabsComponent
+                         : classicTabsComponent
+    }
+
+    Component {
+        id: classicTabsComponent
+        DocumentTabs {
+            app: app
+        }
+    }
+
+    Component {
+        id: githubTabsComponent
+        GithubDocumentTabs {
+            app: app
+            newMapDialog: newMapDialog
+        }
     }
 
     TibiaConfirmDialog {
@@ -326,7 +449,7 @@ Window {
             Text {
                 width: appCloseConfirm.width - 24
                 text: appCloseConfirm.message
-                color: "#c0c0c0"
+                color: root.githubUi ? "#C9D1D9" : "#c0c0c0"
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
             }
@@ -336,6 +459,7 @@ Window {
                 TibiaButton {
                     text: "Save all"
                     width: 130
+                    variant: "primary"
                     onClicked: {
                         appCloseConfirm.close();
                         app.beginSaveAllAndClose();
@@ -344,6 +468,7 @@ Window {
                 TibiaButton {
                     text: "Discard all"
                     width: 110
+                    variant: "danger"
                     onClicked: {
                         appCloseConfirm.close();
                         app.finishAppClose();
@@ -361,17 +486,17 @@ Window {
     MapWorkspace {
         id: workspace
         anchors.top: tabBar.bottom
+        anchors.topMargin: 0
         anchors.bottom: parent.bottom
         anchors.left: paletteSplitter.right
         anchors.right: parent.right
-        anchors.leftMargin: 4
-        anchors.rightMargin: 8
-        anchors.bottomMargin: 6
+        anchors.leftMargin: root.githubUi ? 0 : 4
+        anchors.rightMargin: root.githubUi ? 1 : 8
+        anchors.bottomMargin: root.githubUi ? 1 : 6
         visible: app.started
         app: app
         settings: prefs
         propertiesDialog: propsDialog
-        fps: root.fps
     }
 
     FolderDialog {

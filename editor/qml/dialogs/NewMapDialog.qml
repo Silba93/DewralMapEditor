@@ -6,6 +6,7 @@ TibiaDialog {
     id: root
 
     required property var app
+    property string preferredProfileKey: app.loadedClientKey
 
     title: "New Map"
 
@@ -30,7 +31,7 @@ TibiaDialog {
             return ca ? a.localeCompare(b) : na - nb;
         });
         profileKeys = keys;
-        var idx = profileKeys.indexOf(app.loadedClientKey);
+        var idx = profileKeys.indexOf(preferredProfileKey);
         verCombo.currentIndex = idx >= 0 ? idx : profileKeys.length - 1;
     }
 

@@ -1,0 +1,2 @@
+// Native Windows icon embedded in DME.exe.
+IDI_DME_ICON ICON "DME.ico"

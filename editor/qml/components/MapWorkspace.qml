@@ -8,7 +8,7 @@ Item {
     required property var app
     required property var settings
     required property var propertiesDialog
-    required property int fps
+    readonly property bool githubUi: Backend.uiTheme.style === "github-dark"
 
     property alias mapView: mapView
     property alias mapGl: mapGl
@@ -16,6 +16,17 @@ Item {
 
     TibiaPanel {
         anchors.fill: parent
+        visible: !workspace.githubUi
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: workspace.githubUi
+        color: "#0D1117"
+        border {
+            width: 1
+            color: "#242D38"
+        }
     }
 
     Column {
@@ -68,10 +79,10 @@ Item {
         id: mapArea
         anchors {
             top: errorArea.bottom
-            bottom: parent.bottom
+            bottom: workspace.githubUi ? githubStatus.top : parent.bottom
             left: parent.left
             right: parent.right
-            margins: 3
+            margins: workspace.githubUi ? 1 : 3
         }
         visible: Backend.otbmReader.loaded
         clip: true
@@ -122,6 +133,7 @@ Item {
             id: mapGl
             anchors.fill: parent
             source: mapView
+            vsyncEnabled: workspace.settings.vsyncEnabled
             Component.onCompleted: {
                 if (!workspace.settings.glMaxFpsConfigured) {
                     workspace.settings.glMaxFps = 60;
@@ -257,6 +269,7 @@ Item {
         }
 
         Rectangle {
+            visible: !workspace.githubUi
             anchors {
                 left: parent.left
                 top: parent.top
@@ -269,8 +282,15 @@ Item {
             Text {
                 id: fpsLabel
                 anchors.centerIn: parent
-                text: "FPS: " + workspace.fps + "   OpenGL"
-                color: workspace.fps >= 50 ? "#7fdc8f" : (workspace.fps >= 25 ? "#e0c46a" : "#e08a6a")
+                // mapGl.fps = realne klatki RENDERU MAPY (to ogranicza Limit FPS).
+                // workspace.fps (onFrameSwapped okna) liczyl kompozycje calego UI
+                // - hover na palecie, statusbar, minimapa - i "przekraczal limit",
+                // mimo ze ciezki render mapy trzymal sie ustawienia. Rendering
+                // jest na zadanie, wiec niski FPS w spoczynku to norma - kolor
+                // stale zielony (nie ostrzegaj przy idle).
+                text: mapGl.fps > 0 ? ("FPS: " + mapGl.fps + "   OpenGL")
+                                    : "FPS: idle   OpenGL"
+                color: "#7fdc8f"
                 font.pixelSize: 11
                 font.bold: true
             }
@@ -302,7 +322,7 @@ Item {
                 bottom: parent.bottom
                 margins: 8
             }
-            visible: mapView.hoverText.length > 0
+            visible: !workspace.githubUi && mapView.hoverText.length > 0
             width: hoverLabel.implicitWidth + 16
             height: 22
             radius: 4
@@ -313,6 +333,156 @@ Item {
                 text: mapView.hoverText
                 color: "#ddd"
                 font.pixelSize: 11
+            }
+        }
+    }
+
+    Rectangle {
+        id: githubStatus
+        visible: workspace.githubUi && Backend.otbmReader.loaded
+        anchors {
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+            leftMargin: 1
+            rightMargin: 1
+            bottomMargin: 1
+        }
+        height: visible ? 44 : 0
+        color: "#0F141B"
+        border {
+            width: 1
+            color: "#242D38"
+        }
+
+        Row {
+            anchors {
+                left: parent.left
+                leftMargin: 16
+                verticalCenter: parent.verticalCenter
+            }
+            spacing: 10
+
+            GithubIcon {
+                width: 20
+                height: 20
+                anchors.verticalCenter: parent.verticalCenter
+                name: "target"
+                opacity: 0.8
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Coordinates"
+                color: "#A7B1BC"
+                font.pixelSize: 12
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: mapView.hoverText.length > 0 ? mapView.hoverText : "\u2014"
+                color: mapView.hoverText.length > 0 ? "#E6EDF3" : "#6E7681"
+                font.pixelSize: 12
+            }
+        }
+
+        Row {
+            id: floorZoomStatus
+            anchors.centerIn: parent
+            spacing: 14
+
+            GithubIcon {
+                width: 21
+                height: 21
+                anchors.verticalCenter: parent.verticalCenter
+                name: "layers"
+                opacity: 0.8
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Floor"
+                color: "#A7B1BC"
+                font.pixelSize: 12
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Z - " + mapView.floor
+                color: "#E6EDF3"
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "\u2304"
+                color: "#8B949E"
+                font.pixelSize: 15
+            }
+
+            Rectangle {
+                width: 1
+                height: 20
+                color: "#242D38"
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Zoom"
+                color: "#A7B1BC"
+                font.pixelSize: 12
+            }
+
+            Text {
+                width: 44
+                anchors.verticalCenter: parent.verticalCenter
+                horizontalAlignment: Text.AlignRight
+                text: Math.round(mapView.tileSize / 32 * 100) + "%"
+                color: "#E6EDF3"
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "\u2304"
+                color: "#8B949E"
+                font.pixelSize: 15
+            }
+
+        }
+
+        MouseArea {
+            anchors.fill: floorZoomStatus
+            acceptedButtons: Qt.NoButton
+            onWheel: wheel => mapView.zoomSteps(wheel.angleDelta.y > 0 ? 1 : -1)
+        }
+
+        Row {
+            anchors {
+                right: parent.right
+                rightMargin: 18
+                verticalCenter: parent.verticalCenter
+            }
+            spacing: 7
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: mapGl.fps > 0 ? ("FPS " + mapGl.fps) : "FPS idle"
+                color: "#3FB950"
+                font {
+                    pixelSize: 12
+                    weight: Font.DemiBold
+                }
+            }
+            Rectangle {
+                width: 7
+                height: 7
+                radius: 4
+                color: "#3FB950"
+                anchors.verticalCenter: parent.verticalCenter
             }
         }
     }

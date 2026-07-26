@@ -51,14 +51,14 @@ quint32 MapView::glCollectChunkInstances(int z, quint64 key, bool groundOnly,
         if (groundOnly && !q.ground) continue;
         const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
 
-        const float sel = ((m_selWholeStack || q.topItem)
+        const float sel = (!m_ingamePreview && (m_selWholeStack || q.topItem)
                            && m_selected.contains(selKey(q.tileX, q.tileY, z))) ? 1.0f : 0.0f;
         out.push_back(static_cast<float>(q.worldX));
         out.push_back(static_cast<float>(q.worldY));
         out.push_back(static_cast<float>(slot.x()));
         out.push_back(static_cast<float>(slot.y()));
         out.push_back(sel);
-        out.push_back(static_cast<float>(q.zoneFlags));
+        out.push_back(static_cast<float>(m_ingamePreview ? 0 : q.zoneFlags));
     }
     return ver;
 }
@@ -108,7 +108,8 @@ void MapView::glCollectEffectInstances(std::vector<float> &out)
 void MapView::glCollectSelectionInstances(std::vector<float> &out)
 {
     out.clear();
-    if (m_selected.isEmpty() || m_atlasSlots.empty() || !m_otb || !m_dat) return;
+    if (m_ingamePreview || m_selected.isEmpty() || m_atlasSlots.empty()
+        || !m_otb || !m_dat) return;
 
     std::vector<QuadRef> quads;
     for (quint64 key : m_selected) {
@@ -270,7 +271,7 @@ void MapView::glCollectSpawnMarkInstances(std::vector<float> &out, std::vector<f
     m_spawnIndex.ensure(m_floor, m_floorChunkTiles);
     out.clear();
     outSel.clear();
-    if (!m_showSpawns) return;
+    if (m_ingamePreview || !m_showSpawns) return;
 
     for (const MapSpawnIndexService::Center &c : m_spawnIndex.centers()) {
         std::vector<float> &dst = m_selected.contains(selKey(c.x, c.y, m_floor)) ? outSel : out;
@@ -293,7 +294,7 @@ void MapView::glCollectGridInstances(std::vector<float> &out)
 {
     out.clear();
 
-    if (!m_showGrid || m_tileSize < 8) return;
+    if (m_ingamePreview || !m_showGrid || m_tileSize < 8) return;
 
     const double ts = std::max(1, m_tileSize);
     const int tx0 = static_cast<int>(std::floor(m_originX)) - 1;
@@ -313,12 +314,161 @@ void MapView::glCollectGridInstances(std::vector<float> &out)
         out.insert(out.end(), { x0, y0 + j * 32.0f, wpx, thick });
 }
 
-void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vector<float> &outZone)
+void MapView::glCollectWallOutlineInstances(std::vector<float> &out)
+{
+    out.clear();
+
+    if (m_ingamePreview || !m_showWallOutlines || !m_otbm || !m_otb || !m_dat
+        || m_tileSize < 4) return;
+
+    const double ts = std::max(1, m_tileSize);
+    const int tx0 = static_cast<int>(std::floor(m_originX)) - 1;
+    const int ty0 = static_cast<int>(std::floor(m_originY)) - 1;
+    const int tx1 = tx0 + static_cast<int>(std::ceil(width() / ts)) + 3;
+    const int ty1 = ty0 + static_cast<int>(std::ceil(height() / ts)) + 3;
+
+    auto floorIt = m_floorChunkTiles.constFind(m_floor);
+    if (floorIt == m_floorChunkTiles.cend()) return;
+
+    auto positionKey = [](int x, int y) {
+        return (static_cast<quint64>(static_cast<quint32>(x)) << 32)
+             | static_cast<quint64>(static_cast<quint32>(y));
+    };
+
+    constexpr uint8_t horizontalAxis = 0x01;
+    constexpr uint8_t verticalAxis = 0x02;
+    constexpr uint8_t inferredAxes = 0x80;
+    auto wallAxes = [&](int serverId) -> uint8_t {
+        if (serverId >= 4471 && serverId <= 4513) return 0;
+
+        if (m_otb->groupForServerId(serverId) == static_cast<int>(OtbItemGroup::Door))
+            return inferredAxes;
+
+        const int clientId = m_otb->clientIdForServerId(serverId);
+        const ClientItem *item = clientId > 0
+            ? m_dat->itemByClientId(static_cast<uint16_t>(clientId)) : nullptr;
+        if (!item || item->is_ground || item->is_pickupable) return 0;
+
+        uint8_t axes = 0;
+        if (item->is_vertical) axes |= horizontalAxis;
+        if (item->is_horizontal) axes |= verticalAxis;
+        if (axes != 0) return axes;
+
+        if (item->is_unpassable && item->is_unmoveable
+            && (item->blocks_missiles || item->blocks_pathfinder)) {
+            return inferredAxes;
+        }
+        return 0;
+    };
+
+    QSet<quint64> walls;
+    const int cx0 = floorDiv(tx0 - 1, kChunkTiles);
+    const int cy0 = floorDiv(ty0 - 1, kChunkTiles);
+    const int cx1 = floorDiv(tx1 + 1, kChunkTiles);
+    const int cy1 = floorDiv(ty1 + 1, kChunkTiles);
+
+    for (int cy = cy0; cy <= cy1; ++cy) {
+        for (int cx = cx0; cx <= cx1; ++cx) {
+            auto chunkIt = floorIt->constFind(chunkKey(cx, cy));
+            if (chunkIt == floorIt->cend()) continue;
+
+            for (const OtbmTile *tile : chunkIt.value()) {
+                if (!tile || tile->x < tx0 - 1 || tile->x > tx1 + 1
+                    || tile->y < ty0 - 1 || tile->y > ty1 + 1) {
+                    continue;
+                }
+
+                for (const OtbmMapItem &item : tile->items) {
+                    const uint8_t axes = wallAxes(item.server_id);
+                    if (axes != 0) {
+                        const quint64 key = positionKey(tile->x, tile->y);
+                        walls.insert(key);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (walls.isEmpty()) return;
+
+    const float thickness = 32.0f / static_cast<float>(m_tileSize);
+    out.reserve(static_cast<size_t>(walls.size()) * 20);
+    for (quint64 key : walls) {
+        const int x = static_cast<int>(static_cast<qint32>(key >> 32));
+        const int y = static_cast<int>(static_cast<qint32>(key & 0xffffffffu));
+        if (x < tx0 || x > tx1 || y < ty0 || y > ty1) continue;
+
+        const float px = x * 32.0f;
+        const float py = y * 32.0f;
+        const float halfThickness = thickness * 0.5f;
+        const float centerX = px + 16.0f;
+        const float centerY = py + 16.0f;
+        auto hasWall = [&](int nx, int ny) { return walls.contains(positionKey(nx, ny)); };
+
+        const bool north = hasWall(x, y - 1);
+        const bool south = hasWall(x, y + 1);
+        const bool west = hasWall(x - 1, y);
+        const bool east = hasWall(x + 1, y);
+        const bool diagonalNeighbor = hasWall(x - 1, y - 1) || hasWall(x + 1, y - 1)
+                                   || hasWall(x - 1, y + 1) || hasWall(x + 1, y + 1);
+        int connections = static_cast<int>(north) + static_cast<int>(south)
+                        + static_cast<int>(west) + static_cast<int>(east);
+
+        if (east)
+            out.insert(out.end(), { centerX - halfThickness, centerY - halfThickness,
+                                    32.0f + thickness, thickness });
+        if (south)
+            out.insert(out.end(), { centerX - halfThickness, centerY - halfThickness,
+                                    thickness, 32.0f + thickness });
+
+        auto addDiagonalBridge = [&](int dy) {
+            const float targetY = centerY + dy * 32.0f;
+            const float bridgeY = std::min(centerY, targetY);
+            out.insert(out.end(), { centerX - halfThickness, centerY - halfThickness,
+                                    16.0f + thickness, thickness });
+            out.insert(out.end(), { px + 32.0f - halfThickness, bridgeY - halfThickness,
+                                    thickness, 32.0f + thickness });
+            out.insert(out.end(), { px + 32.0f - halfThickness, targetY - halfThickness,
+                                    16.0f + thickness, thickness });
+        };
+
+        if (!east && !south && hasWall(x + 1, y + 1)) {
+            addDiagonalBridge(1);
+            ++connections;
+        }
+        if (!east && !north && hasWall(x + 1, y - 1)) {
+            addDiagonalBridge(-1);
+            ++connections;
+        }
+
+        if (connections == 0 && !diagonalNeighbor) {
+            out.insert(out.end(), { px, centerY - halfThickness, 32.0f, thickness });
+        } else if (connections == 1) {
+            if (north || south)
+                out.insert(out.end(), { centerX - halfThickness, py,
+                                        thickness, 32.0f });
+            else if (west || east)
+                out.insert(out.end(), { px, centerY - halfThickness,
+                                        32.0f, thickness });
+        }
+    }
+}
+
+void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse,
+                                         std::vector<float> &outPz,
+                                         std::vector<float> &outNoPvp,
+                                         std::vector<float> &outNoLogout,
+                                         std::vector<float> &outPvp)
 {
     outHouse.clear();
-    outZone.clear();
+    outPz.clear();
+    outNoPvp.clear();
+    outNoLogout.clear();
+    outPvp.clear();
 
-    if (!m_otbm || !m_showZonesAlways || (!m_showZones && !m_showHouses)) return;
+    if (m_ingamePreview || !m_otbm || !m_showZonesAlways
+        || (!m_showZones && !m_showHouses)) return;
 
     const double ts = std::max(1, m_tileSize);
     const int tx0 = static_cast<int>(std::floor(m_originX)) - 1;
@@ -342,32 +492,59 @@ void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse, std::vect
                     outHouse.insert(outHouse.end(),
                                     { t->x * 32.0f, t->y * 32.0f, 32.0f, 32.0f });
                 } else if (m_showZones && t->flags != 0) {
-                    outZone.insert(outZone.end(),
-                                   { t->x * 32.0f, t->y * 32.0f, 32.0f, 32.0f });
+                    const std::initializer_list<float> rect {
+                        t->x * 32.0f, t->y * 32.0f, 32.0f, 32.0f
+                    };
+                    if ((t->flags & 1u) != 0) {
+                        outPz.insert(outPz.end(), rect);
+                    }
+                    if ((t->flags & 4u) != 0) {
+                        outNoPvp.insert(outNoPvp.end(), rect);
+                    }
+                    if ((t->flags & 8u) != 0) {
+                        outNoLogout.insert(outNoLogout.end(), rect);
+                    }
+                    if ((t->flags & 16u) != 0) {
+                        outPvp.insert(outPvp.end(), rect);
+                    }
                 }
             }
         }
 }
 
-void MapView::glCollectBrushCursorInstances(std::vector<float> &out)
+void MapView::glCollectBrushCursorInstances(std::vector<float> &out,
+                                            std::vector<float> &outBorder)
 {
     out.clear();
+    outBorder.clear();
 
-    if (m_movingSel || m_selecting || m_selectionMode || m_pasting || m_hoverX < 0) return;
+    if (m_ingamePreview || m_movingSel || m_selecting || m_selectionMode
+        || m_pasting || m_hoverX < 0) return;
     if (m_brushServerId <= 0 && m_activeZone == 0 && !m_eraseMode
         && !m_spawnBrush && m_creatureBrush.isEmpty() && m_houseBrush <= 0) return;
 
     if (!m_activeDoodadBrush.isEmpty()) return;
+
+    const auto addRect = [](std::vector<float> &target, float x, float y,
+                            float width, float height) {
+        target.insert(target.end(), { x, y, width, height });
+    };
+    constexpr float borderWidth = 2.0f;
 
     if (m_dragDraw) {
         const int x0 = std::min(m_dragStartX, m_hoverX);
         const int x1 = std::max(m_dragStartX, m_hoverX);
         const int y0 = std::min(m_dragStartY, m_hoverY);
         const int y1 = std::max(m_dragStartY, m_hoverY);
-        out.push_back(static_cast<float>(x0 * kSprite));
-        out.push_back(static_cast<float>(y0 * kSprite));
-        out.push_back(static_cast<float>((x1 - x0 + 1) * kSprite));
-        out.push_back(static_cast<float>((y1 - y0 + 1) * kSprite));
+        const float px = static_cast<float>(x0 * kSprite);
+        const float py = static_cast<float>(y0 * kSprite);
+        const float pw = static_cast<float>((x1 - x0 + 1) * kSprite);
+        const float ph = static_cast<float>((y1 - y0 + 1) * kSprite);
+        addRect(out, px, py, pw, ph);
+        addRect(outBorder, px, py, pw, borderWidth);
+        addRect(outBorder, px, py + ph - borderWidth, pw, borderWidth);
+        addRect(outBorder, px, py, borderWidth, ph);
+        addRect(outBorder, px + pw - borderWidth, py, borderWidth, ph);
         return;
     }
 
@@ -375,17 +552,28 @@ void MapView::glCollectBrushCursorInstances(std::vector<float> &out)
     for (int dy = -r; dy <= r; ++dy)
         for (int dx = -r; dx <= r; ++dx) {
             if (!brushCovers(dx, dy)) continue;
-            out.push_back(static_cast<float>((m_hoverX + dx) * kSprite));
-            out.push_back(static_cast<float>((m_hoverY + dy) * kSprite));
-            out.push_back(static_cast<float>(kSprite));
-            out.push_back(static_cast<float>(kSprite));
+            const float px = static_cast<float>((m_hoverX + dx) * kSprite);
+            const float py = static_cast<float>((m_hoverY + dy) * kSprite);
+            addRect(out, px, py, static_cast<float>(kSprite), static_cast<float>(kSprite));
+
+            if (!brushCovers(dx - 1, dy))
+                addRect(outBorder, px, py, borderWidth, static_cast<float>(kSprite));
+            if (!brushCovers(dx + 1, dy))
+                addRect(outBorder, px + kSprite - borderWidth, py,
+                        borderWidth, static_cast<float>(kSprite));
+            if (!brushCovers(dx, dy - 1))
+                addRect(outBorder, px, py, static_cast<float>(kSprite), borderWidth);
+            if (!brushCovers(dx, dy + 1))
+                addRect(outBorder, px, py + kSprite - borderWidth,
+                        static_cast<float>(kSprite), borderWidth);
         }
 }
 
 void MapView::glCollectGhostInstances(std::vector<float> &out)
 {
     out.clear();
-    if (m_hoverX < 0 || m_atlasSlots.empty() || !m_otb || !m_dat) return;
+    if (m_ingamePreview || m_hoverX < 0 || m_atlasSlots.empty() || !m_otb || !m_dat)
+        return;
 
     if (m_pasting && !m_clipboard.empty()) {
         for (const ClipTile &ct : m_clipboard) {
@@ -489,27 +677,82 @@ void MapView::glCollectGhostInstances(std::vector<float> &out)
         return;
     }
 
-    if (!(m_movingSel && m_moveMoved) || m_selected.isEmpty()) return;
+    if (!m_movingSel || m_selected.isEmpty()
+        || (!m_moveMoved && m_floor == m_moveSrcZ)) return;
 
-    const int odx = (m_hoverX - m_moveSrcX) * kSprite;
-    const int ody = (m_hoverY - m_moveSrcY) * kSprite;
+    const int dx = m_hoverX - m_moveSrcX;
+    const int dy = m_hoverY - m_moveSrcY;
+    const int dz = m_floor - m_moveSrcZ;
 
     std::vector<QuadRef> quads;
     for (quint64 key : m_selected) {
-        if (selZ(key) != m_floor) continue;
-        const int x = selX(key), y = selY(key);
-        const OtbmTile *tile = currentFloorTileAt(x, y);
+        const OtbmTile *tile = m_otbm->tileAt(selX(key), selY(key), selZ(key));
         if (!tile) continue;
+        const int targetX = static_cast<int>(tile->x) + dx;
+        const int targetY = static_cast<int>(tile->y) + dy;
+        const int targetZ = static_cast<int>(tile->z) + dz;
+        if (targetZ != m_floor) continue;
+        if (targetX < 0 || targetX > 65535
+            || targetY < 0 || targetY > 65535
+            || targetZ < 0 || targetZ > 15) continue;
+
+        OtbmTile previewTile = *tile;
+        previewTile.x = static_cast<uint16_t>(targetX);
+        previewTile.y = static_cast<uint16_t>(targetY);
+        previewTile.z = static_cast<uint8_t>(targetZ);
         quads.clear();
-        appendTopItemQuads(tile, quads);
+        appendTopItemQuads(&previewTile, quads);
         for (const QuadRef &q : quads) {
             const QRect &slot = m_atlasSlots[static_cast<size_t>(q.atlasSlot)];
-            out.push_back(static_cast<float>(q.worldX + odx));
-            out.push_back(static_cast<float>(q.worldY + ody));
+            out.push_back(static_cast<float>(q.worldX));
+            out.push_back(static_cast<float>(q.worldY));
             out.push_back(static_cast<float>(slot.x()));
             out.push_back(static_cast<float>(slot.y()));
         }
     }
+}
+
+void MapView::glCollectPreviewPlayerInstances(std::vector<float> &out)
+{
+    out.clear();
+    if (!m_ingamePreview || !m_dat || m_atlasSlots.empty()) return;
+
+    const ClientItem *outfit = m_dat->outfitByLookType(
+        static_cast<uint16_t>(m_previewLookType));
+    if (!outfit || outfit->sprite_ids.empty()) return;
+
+    const int width = std::max<int>(1, outfit->width);
+    const int height = std::max<int>(1, outfit->height);
+    const int layers = std::max<int>(1, outfit->layers);
+    const int patternX = std::max<int>(1, outfit->pattern_x);
+    const int patternY = std::max<int>(1, outfit->pattern_y);
+    const int patternZ = std::max<int>(1, outfit->pattern_z);
+    const int frames = std::max<int>(1, outfit->frames);
+    const int direction = std::clamp(m_previewDirection, 0, patternX - 1);
+    const int frame = m_previewStepFrame % frames;
+    const int frameStride = patternZ * patternY * patternX * layers * height * width;
+
+    out.reserve(static_cast<size_t>(width) * height * 4);
+    for (int hh = 0; hh < height; ++hh)
+        for (int ww = 0; ww < width; ++ww) {
+            const int cell = ((direction * layers) * height + hh) * width + ww;
+            int index = frame * frameStride + cell;
+            uint32_t spriteId = index >= 0 && index < static_cast<int>(outfit->sprite_ids.size())
+                ? outfit->sprite_ids[static_cast<size_t>(index)] : 0;
+            int atlasSlot = spriteId != 0 ? atlasSlotForSprite(spriteId) : -1;
+            if (atlasSlot < 0 && frame != 0) {
+                index = cell;
+                spriteId = index >= 0 && index < static_cast<int>(outfit->sprite_ids.size())
+                    ? outfit->sprite_ids[static_cast<size_t>(index)] : 0;
+                atlasSlot = spriteId != 0 ? atlasSlotForSprite(spriteId) : -1;
+            }
+            if (atlasSlot < 0) continue;
+            const QRect &slot = m_atlasSlots[static_cast<size_t>(atlasSlot)];
+            out.push_back(static_cast<float>((m_previewX - ww) * kSprite));
+            out.push_back(static_cast<float>((m_previewY - hh) * kSprite));
+            out.push_back(static_cast<float>(slot.x()));
+            out.push_back(static_cast<float>(slot.y()));
+        }
 }
 
 bool MapView::glFloorChunksReady(int z, int cMinX, int cMinY, int cMaxX, int cMaxY)

@@ -195,6 +195,9 @@ class OtbmReader : public QObject
     QML_ANONYMOUS
     Q_PROPERTY(bool loaded READ isLoaded NOTIFY loadedChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorChanged)
+    Q_PROPERTY(bool loading READ isLoading NOTIFY loadingChanged)
+    Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
+    Q_PROPERTY(QString loadingStage READ loadingStage NOTIFY loadingStageChanged)
 
     Q_PROPERTY(bool dirty READ isDirty NOTIFY dirtyChanged)
     Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
@@ -218,6 +221,9 @@ public:
     ~OtbmReader() override;
 
     bool isLoaded() const { return m_loaded; }
+    bool isLoading() const { return m_loading; }
+    int loadingProgress() const { return m_loadingProgress; }
+    QString loadingStage() const { return m_loadingStage; }
     bool isDirty() const { return m_dirty; }
     QString filePath() const { return m_filePath; }
 
@@ -254,6 +260,8 @@ public:
     Q_INVOKABLE void setTownTemple(int id, int x, int y, int z);
 
     Q_INVOKABLE bool loadFile(const QString &path);
+    Q_INVOKABLE void reportLoadingProgress(int progress, const QString &stage);
+    Q_INVOKABLE void finishLoading(bool success);
 
     Q_INVOKABLE bool saveFile(const QString &path);
     Q_INVOKABLE QVariantMap header() const;
@@ -331,6 +339,9 @@ signals:
     void mapChanged();
     void dirtyChanged();
     void filePathChanged();
+    void loadingChanged();
+    void loadingProgressChanged();
+    void loadingStageChanged();
 
 private:
     void reset();
@@ -416,6 +427,9 @@ private:
     int m_itemCount = 0;
 
     bool m_loaded = false;
+    bool m_loading = false;
+    int m_loadingProgress = 0;
+    QString m_loadingStage;
     QString m_errorString;
     bool m_dirty = false;
     QString m_filePath;
