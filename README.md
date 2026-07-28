@@ -4,16 +4,14 @@ Dewral Map Editor (DME) is a desktop OpenTibia map editor for OTBM maps. It
 uses a Qt 6/QML interface and a custom OpenGL renderer designed for large,
 multi-floor Tibia maps.
 
+> **Development note:** This project was developed primarily with assistance
+> from Claude Code Fable 5, Claude Opus 4.8, and ChatGPT 5.6 Sol.
+
 > Client assets are not included. DME requires your own `Tibia.dat`,
 > `Tibia.spr`, and `items.otb` files. These files are copyrighted by CipSoft
 > and must not be committed to this repository or included in a release.
 
-<!-- SCREENSHOT SLOT: HERO
-Save the main editor screenshot as docs/screenshots/editor-overview.png.
-Recommended capture: 1600x900 or larger, GitHub theme, a map open, palette
-visible, no private paths. Then replace this comment with:
 ![Dewral Map Editor with an OTBM map open](docs/screenshots/editor-overview.png)
--->
 
 ## Highlights
 
@@ -35,42 +33,25 @@ visible, no private paths. Then replace this comment with:
 
 ## Screenshots
 
-The following screenshot locations are intentionally reserved. Capture the
-images described below and save them with the exact filenames. Full guidance
-is available in [`docs/screenshots/README.md`](docs/screenshots/README.md).
-
-<!-- SCREENSHOT SLOT: STARTUP
-File: docs/screenshots/startup-client-profile.png
-Alt text: DME startup window with a configured custom client profile
-Markdown: ![DME startup window with a configured custom client profile](docs/screenshots/startup-client-profile.png)
--->
-
 ### Client profiles
 
-Add `docs/screenshots/startup-client-profile.png` here.
+Configure a built-in client version or point a custom profile at your own
+client assets.
 
-<!-- SCREENSHOT SLOT: BRUSH EDITOR
-File: docs/screenshots/brush-editor.png
-Alt text: Creating and editing a brush in the DME Brush Editor
-Markdown: ![Creating and editing a brush in the DME Brush Editor](docs/screenshots/brush-editor.png)
--->
+![DME startup window with a configured custom client profile](docs/screenshots/startup-client-profile.png)
 
 ### Brush Editor
 
-Add `docs/screenshots/brush-editor.png` here.
+Create and organize custom brushes directly in the editor.
 
-<!-- SCREENSHOT SLOT: CLASSIC UI
-File: docs/screenshots/classic-ui.png
-Alt text: Dewral Map Editor using the Tibia-inspired Classic UI
-Markdown: ![Dewral Map Editor using the Tibia-inspired Classic UI](docs/screenshots/classic-ui.png)
--->
+![Creating and editing a brush in the DME Brush Editor](docs/screenshots/brush-editor.png)
 
 ### Classic UI
 
 The interface can be changed at any time in the theme settings. Choose the
 modern GitHub-inspired layout or the textured, Tibia-inspired Classic UI.
 
-Add `docs/screenshots/classic-ui.png` here.
+![Dewral Map Editor using the Tibia-inspired Classic UI](docs/screenshots/classic-ui.png)
 
 ## Download and run
 
