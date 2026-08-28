@@ -18,6 +18,7 @@
       ]
     },
     "qtdeclarative",
-    "qtsvg"
+    "qtsvg",
+    "tomlplusplus"
   ]
 }

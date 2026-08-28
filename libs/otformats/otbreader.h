@@ -39,6 +39,8 @@ struct OtbItem {
     uint32_t flags = 0;
     QString name;
     QString description;
+    QString type;
+    uint16_t rotate_to = 0;
     uint16_t speed = 0;
     uint16_t max_text_length = 0;
     uint8_t light_level = 0;
@@ -71,6 +73,7 @@ class OtbReader : public QAbstractListModel
     Q_PROPERTY(quint32 majorVersion READ majorVersion NOTIFY loadedChanged)
     Q_PROPERTY(quint32 minorVersion READ minorVersion NOTIFY loadedChanged)
     Q_PROPERTY(quint32 buildNumber READ buildNumber NOTIFY loadedChanged)
+    Q_PROPERTY(QString itemSource READ itemSource NOTIFY sourceChanged)
 
 public:
     enum ItemRoles {
@@ -103,12 +106,14 @@ public:
     quint32 majorVersion() const { return m_majorVersion; }
     quint32 minorVersion() const { return m_minorVersion; }
     quint32 buildNumber() const { return m_buildNumber; }
+    QString itemSource() const { return m_itemSource; }
 
     void setDatReader(DatReader *datReader);
 
     void setItemsXml(ItemsXmlReader *itemsXml);
 
     Q_INVOKABLE bool loadFile(const QString &path);
+    Q_INVOKABLE bool loadTomlFile(const QString &path, int clientVersion = 0);
     Q_INVOKABLE int clientIdForServerId(int serverId) const;
     Q_INVOKABLE QString nameForServerId(int serverId) const;
 
@@ -133,6 +138,7 @@ signals:
     void itemCountChanged();
     void loadedChanged();
     void errorChanged();
+    void sourceChanged();
 
 private:
     static uint8_t mapGroup(uint8_t group);
@@ -152,6 +158,7 @@ private:
     uint32_t m_buildNumber = 0;
     bool m_loaded = false;
     QString m_errorString;
+    QString m_itemSource = QStringLiteral("standard");
 };
 
 #endif

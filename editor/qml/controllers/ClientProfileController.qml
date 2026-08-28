@@ -7,12 +7,16 @@ QtObject {
     required property var mapView
 
     property var clientPaths: ({})
+    property var itemDataPaths: ({})
     property var customProfiles: []
     property var mapProfiles: ({})
     readonly property var knownVersions: [760, 772, 780, 792, 800, 810, 820, 840, 850, 854, 860, 870, 910, 920, 946, 954, 960, 986, 1010, 1030, 1041, 1077, 1098]
     property int loadedClientVersion: 0
     property string loadedClientKey: ""
     property string loadedClientFolder: ""
+    property string loadedItemSource: "standard"
+    property string loadedItemTomlPath: ""
+    property string lastLoadError: ""
 
     function versionLabel(version) {
         if (version >= 10100)
@@ -75,6 +79,10 @@ QtObject {
         delete paths[name];
         clientPaths = paths;
         saveClientPaths();
+        var itemPaths = JSON.parse(JSON.stringify(itemDataPaths));
+        delete itemPaths[name];
+        itemDataPaths = itemPaths;
+        saveItemDataPaths();
     }
 
     function load() {
@@ -82,6 +90,11 @@ QtObject {
             clientPaths = JSON.parse(settings.clientPathsJson) || ({});
         } catch (e) {
             clientPaths = ({});
+        }
+        try {
+            itemDataPaths = JSON.parse(settings.itemDataPathsJson) || ({});
+        } catch (e) {
+            itemDataPaths = ({});
         }
         try {
             customProfiles = JSON.parse(settings.customProfilesJson) || [];
@@ -93,6 +106,19 @@ QtObject {
         } catch (e) {
             mapProfiles = ({});
         }
+
+        var migratedProfiles = ({});
+        Object.keys(mapProfiles).forEach(function (path) {
+            var value = mapProfiles[path];
+            var canonicalPath = Backend.fileTools.canonicalPath(path) || path;
+            migratedProfiles[canonicalPath] = typeof value === "string"
+                ? { profileKey: value, itemSource: "standard" } : {
+                    profileKey: value.profileKey || "",
+                    itemSource: value.itemSource === "blacktek" ? "blacktek" : "standard"
+                };
+        });
+        mapProfiles = migratedProfiles;
+        settings.mapProfilesJson = JSON.stringify(mapProfiles);
 
         if (Object.keys(clientPaths).length === 0 && settings.clientFolder !== "") {
             var paths = ({});
@@ -106,6 +132,10 @@ QtObject {
         settings.clientPathsJson = JSON.stringify(clientPaths);
     }
 
+    function saveItemDataPaths() {
+        settings.itemDataPathsJson = JSON.stringify(itemDataPaths);
+    }
+
     function setVersionFolder(key, folder) {
         var copy = JSON.parse(JSON.stringify(clientPaths));
         copy[String(key)] = folder;
@@ -113,13 +143,23 @@ QtObject {
         saveClientPaths();
     }
 
-    function loadProfileData(key) {
+    function setItemDataPath(key, path) {
+        var copy = JSON.parse(JSON.stringify(itemDataPaths));
+        copy[String(key)] = path || "";
+        itemDataPaths = copy;
+        saveItemDataPaths();
+    }
+
+    function loadProfileData(key, itemSource) {
         var version = profileVer(key);
         if (!isCustomKey(key)) {
             Backend.tilesetStore.loadForVersion(version);
             Backend.brushStore.loadForVersion(version);
             Backend.creatureStore.loadForVersion(version);
-            Backend.itemsXml.loadForVersion(version);
+            if (itemSource === "blacktek")
+                Backend.itemsXml.clear();
+            else
+                Backend.itemsXml.loadForVersion(version);
             return;
         }
         Backend.tilesetStore.loadForDir(key);
@@ -127,7 +167,9 @@ QtObject {
             Backend.brushStore.loadForVersion(version);
         if (!Backend.creatureStore.loadForDir(key))
             Backend.creatureStore.loadForVersion(version);
-        if (!Backend.itemsXml.loadForDir(key))
+        if (itemSource === "blacktek")
+            Backend.itemsXml.clear();
+        else if (!Backend.itemsXml.loadForDir(key))
             Backend.itemsXml.loadForVersion(version);
     }
 
@@ -145,20 +187,46 @@ QtObject {
         };
     }
 
-    function rememberMapProfile(mapPath, key) {
-        if (mapPath === "" || key === "" || mapProfiles[mapPath] === key)
+    function itemTomlPath(key) {
+        var configured = itemDataPaths[String(key)] || "";
+        return Backend.fileTools.findToml(configured);
+    }
+
+    function normalizeItemSource(source) {
+        return String(source || "").toLowerCase() === "blacktek" ? "blacktek" : "standard";
+    }
+
+    function mapProfileFor(path) {
+        var canonical = Backend.fileTools.canonicalPath(path);
+        if (!canonical || !mapProfiles[canonical]) return null;
+        var value = mapProfiles[canonical];
+        return typeof value === "string"
+            ? { profileKey: value, itemSource: "standard" } : value;
+    }
+
+    function rememberMapProfile(mapPath, key, itemSource) {
+        if (mapPath === "" || key === "")
+            return;
+        mapPath = Backend.fileTools.canonicalPath(mapPath);
+        var source = normalizeItemSource(itemSource || (mapProfileFor(mapPath) || {}).itemSource);
+        var current = mapProfileFor(mapPath);
+        if (current && current.profileKey === String(key) && current.itemSource === source)
             return;
         var copy = JSON.parse(JSON.stringify(mapProfiles));
-        copy[mapPath] = key;
+        copy[mapPath] = { profileKey: String(key), itemSource: source };
         mapProfiles = copy;
         settings.mapProfilesJson = JSON.stringify(mapProfiles);
     }
 
-    function switchMapProfile(key) {
-        if (!ensureClientVersion(key))
+    function switchMapProfile(key, itemSource) {
+        if (itemSource === undefined || itemSource === null || String(itemSource) === "")
+            itemSource = Backend.docMgr.currentItemSource;
+        itemSource = normalizeItemSource(itemSource);
+        if (!ensureClientVersion(key, itemSource))
             return false;
+        Backend.docMgr.setCurrentItemSource(itemSource);
         if (Backend.otbmReader.filePath !== "")
-            rememberMapProfile(Backend.otbmReader.filePath, key);
+            rememberMapProfile(Backend.otbmReader.filePath, key, itemSource);
         return true;
     }
 
@@ -187,26 +255,45 @@ QtObject {
         return String(version);
     }
 
-    function ensureClientLoaded(reader, preferredProfileKey) {
+    function ensureClientLoaded(reader, preferredProfileKey, preferredItemSource) {
         var version = reader.suggestedClientVersion();
         if (version <= 0)
             version = 772;
         var preferred = preferredProfileKey === undefined || preferredProfileKey === null ? "" : String(preferredProfileKey);
         var compatible = preferred !== "" && profileVer(preferred) === version;
-        var remembered = reader.filePath !== "" ? (mapProfiles[reader.filePath] || "") : "";
-        var key = compatible ? preferred : (remembered !== "" && (clientPaths[remembered] || "") !== "" ? remembered : resolveKeyForVersion(version));
-        return ensureClientVersion(key);
+        var remembered = reader.filePath !== "" ? mapProfileFor(reader.filePath) : null;
+        var rememberedKey = remembered ? remembered.profileKey : "";
+        var key = compatible ? preferred : (rememberedKey !== "" && (clientPaths[rememberedKey] || "") !== "" ? rememberedKey : resolveKeyForVersion(version));
+        var source = preferredItemSource !== undefined && preferredItemSource !== null && String(preferredItemSource) !== ""
+            ? normalizeItemSource(preferredItemSource)
+            : remembered ? normalizeItemSource(remembered.itemSource) : normalizeItemSource(reader.itemSource);
+        return ensureClientVersion(key, source);
     }
 
-    function ensureClientVersion(key) {
+    function ensureClientVersion(key, itemSource) {
         key = String(key);
+        itemSource = normalizeItemSource(itemSource);
         var version = profileVer(key);
         var folder = clientPaths[key] || "";
         var files = clientFiles(folder);
-        if (version <= 0 || folder === "" || !files.dat || !files.spr || !files.otb)
+        var tomlPath = itemTomlPath(key);
+        lastLoadError = "";
+        if (version <= 0 || folder === "" || !files.dat || !files.spr) {
+            lastLoadError = "Missing BlackTek DAT/SPR files";
+            if (itemSource === "standard") lastLoadError = "Missing standard DAT/SPR files";
             return false;
+        }
+        if (itemSource === "standard" && !files.otb) {
+            lastLoadError = "Missing standard items.otb file";
+            return false;
+        }
+        if (itemSource === "blacktek" && !tomlPath) {
+            lastLoadError = "Missing BlackTek items.toml file";
+            return false;
+        }
 
-        if (loadedClientKey === key && loadedClientFolder === folder)
+        if (loadedClientKey === key && loadedClientFolder === folder
+            && loadedItemSource === itemSource && loadedItemTomlPath === tomlPath)
         {
             if (Backend.otbmReader.loading) {
                 Backend.otbmReader.reportLoadingProgress(94, "Rebuilding sprite atlas...");
@@ -231,12 +318,18 @@ QtObject {
         var sprOk = Backend.sprReader.loadFile(sprFile, 0, extendedSpr, alphaSpr);
         if (Backend.otbmReader.loading)
             Backend.otbmReader.reportLoadingProgress(88, "Loading server items...");
-        var otbOk = Backend.otbReader.loadFile(files.otb);
+        var itemOk = itemSource === "blacktek"
+            ? Backend.otbReader.loadTomlFile(tomlPath, version)
+            : Backend.otbReader.loadFile(files.otb);
 
-        if (!datOk || !sprOk || !otbOk) {
+        if (!datOk || !sprOk || !itemOk) {
+            lastLoadError = !datOk ? Backend.datReader.errorString
+                : !sprOk ? Backend.sprReader.errorString : Backend.otbReader.errorString;
             loadedClientVersion = 0;
             loadedClientKey = "";
             loadedClientFolder = "";
+            loadedItemSource = "standard";
+            loadedItemTomlPath = "";
             mapView.rebuildAtlas();
             return false;
         }
@@ -244,15 +337,20 @@ QtObject {
         loadedClientVersion = version;
         loadedClientKey = key;
         loadedClientFolder = folder;
+        loadedItemSource = itemSource;
+        loadedItemTomlPath = tomlPath;
         if (Backend.otbmReader.loading)
             Backend.otbmReader.reportLoadingProgress(90, "Preparing palette sprites...");
         Backend.preloadPaletteSprites();
         if (Backend.otbmReader.loading)
             Backend.otbmReader.reportLoadingProgress(92, "Loading editor palettes...");
-        loadProfileData(key);
+        loadProfileData(key, itemSource);
         if (Backend.otbmReader.loading)
             Backend.otbmReader.reportLoadingProgress(94, "Rebuilding sprite atlas...");
-        mapView.rebuildAtlas();
+        if (Backend.otbmReader.loading)
+            mapView.rebuildAtlas();
+        else
+            mapView.refreshItemData();
         return true;
     }
 }

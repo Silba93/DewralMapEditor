@@ -33,6 +33,26 @@ QString FileTools::findByExt(const QString &folder, const QString &ext,
     return dir.absoluteFilePath(matches.first());
 }
 
+QString FileTools::findToml(const QString &path) const
+{
+    if (path.isEmpty()) return QString();
+
+    const QFileInfo input(path);
+    if (input.isFile()) {
+        return input.suffix().compare(QStringLiteral("toml"), Qt::CaseInsensitive) == 0
+                   ? input.absoluteFilePath() : QString();
+    }
+    if (!input.isDir()) return QString();
+
+    const QDir dir(input.absoluteFilePath());
+    const QString direct = dir.filePath(QStringLiteral("items.toml"));
+    if (QFileInfo::isFile(direct)) return QFileInfo(direct).absoluteFilePath();
+
+    const QString nested = dir.filePath(QStringLiteral("items/items.toml"));
+    if (QFileInfo::isFile(nested)) return QFileInfo(nested).absoluteFilePath();
+    return QString();
+}
+
 QString FileTools::fileName(const QString &path) const
 {
     return QFileInfo(path).fileName();
@@ -41,6 +61,14 @@ QString FileTools::fileName(const QString &path) const
 QString FileTools::dirName(const QString &path) const
 {
     return QFileInfo(path).absolutePath();
+}
+
+QString FileTools::canonicalPath(const QString &path) const
+{
+    if (path.isEmpty()) return QString();
+    const QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    return canonical.isEmpty() ? info.absoluteFilePath() : canonical;
 }
 
 void FileTools::setClipboard(const QString &text) const

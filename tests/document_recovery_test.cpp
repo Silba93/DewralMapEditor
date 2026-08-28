@@ -37,6 +37,7 @@ int main(int argc, char **argv)
         if (!require(document != nullptr, "Document manager has no initial document")) return 1;
         if (!require(document->newMap(1024, 1024, 1098, 3, 57),
                      "Could not create recovery test map")) return 1;
+        manager.setCurrentItemSource(QStringLiteral("blacktek"));
         if (!require(document->setMapProperties(QStringLiteral("Recovery test"),
                                                 1024, 1024,
                                                 QStringLiteral("real-spawn.xml"),
@@ -68,6 +69,9 @@ int main(int argc, char **argv)
                      "Closing recovery prompt discarded pending recovery")) return 1;
         const QVariantMap entry = recoveredSession.recoveries().front().toMap();
         recoveryFile = entry.value(QStringLiteral("recoveryPath")).toString();
+        if (!require(entry.value(QStringLiteral("itemSource")).toString()
+                         == QStringLiteral("blacktek"),
+                     "Recovery did not preserve the item source")) return 1;
         if (!require(QFileInfo::exists(recoveryFile), "Recovery OTBM does not exist")) return 1;
 
         OtbmReader *recovered = recoveredSession.current();
@@ -79,6 +83,8 @@ int main(int argc, char **argv)
         if (!require(recoveredSession.adoptCurrentRecovery(
                          entry.value(QStringLiteral("id")).toString(), QString()),
                      "Could not adopt recovered document identity")) return 1;
+        if (!require(recoveredSession.currentItemSource() == QStringLiteral("blacktek"),
+                     "Adopted recovery did not restore the item source")) return 1;
         if (!require(recovered->spawnFile() == QStringLiteral("real-spawn.xml")
                      && recovered->houseFile() == QStringLiteral("real-house.xml"),
                      "Recovery kept its internal sidecar names")) return 1;

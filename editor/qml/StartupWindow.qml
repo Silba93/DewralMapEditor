@@ -17,6 +17,7 @@ Window {
     property bool loadingMap: false
     property string loadingMapPath: ""
     property string loadingProfileKey: ""
+    property string loadingItemSource: ""
 
     Connections {
         target: Backend.updateService
@@ -30,11 +31,12 @@ Window {
         id: startupUpdateDialog
     }
 
-    function beginLoadMap(path, profileKey) {
+    function beginLoadMap(path, profileKey, itemSource) {
         if (!path || loadingMap)
             return;
         loadingMapPath = path;
         loadingProfileKey = profileKey || "";
+        loadingItemSource = itemSource || "";
         Backend.otbmReader.reportLoadingProgress(0, "Preparing map...");
         loadingMap = true;
         loadDelay.restart();
@@ -46,9 +48,13 @@ Window {
     function openVersionFolderDialog() {
         versionFolderDialogStartup.open();
     }
+    function openItemDataDialog() {
+        itemDataDialogStartup.open();
+    }
     function beginRecoveryLoad(path) {
         loadingMapPath = path;
         loadingProfileKey = "";
+        loadingItemSource = "";
         loadingMap = true;
     }
 
@@ -73,7 +79,8 @@ Window {
         repeat: false
         onTriggered: {
             if (!startupScreen.app.loadEverything(startupScreen.loadingMapPath,
-                                                  startupScreen.loadingProfileKey))
+                                                  startupScreen.loadingProfileKey,
+                                                  startupScreen.loadingItemSource))
                 startupScreen.loadingMap = false;
         }
     }
@@ -234,6 +241,48 @@ Window {
 
                     Row {
                         spacing: 6
+                        Text {
+                            text: "Item data"
+                            color: "#999"
+                            font.pixelSize: 11
+                            width: 68
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        DmeComboBox {
+                            id: sourceCombo
+                            width: 164
+                            height: 23
+                            model: ["Standard", "BlackTek"]
+                            readonly property string sourceKey: currentIndex === 1 ? "blacktek" : "standard"
+                        }
+                    }
+
+                    DmeButton {
+                        width: 112
+                        height: 21
+                        text: "Items folder..."
+                        onClicked: {
+                            app.pendingKey = verCombo.selKey;
+                            app.pendingMapPath = "";
+                            app.pendingItemSource = "blacktek";
+                            itemDataDialogStartup.open();
+                        }
+                    }
+
+                    DmeButton {
+                        width: 114
+                        height: 21
+                        text: "Items file..."
+                        onClicked: {
+                            app.pendingKey = verCombo.selKey;
+                            app.pendingMapPath = "";
+                            app.pendingItemSource = "blacktek";
+                            itemDataFileDialogStartup.open();
+                        }
+                    }
+
+                    Row {
+                        spacing: 6
                         DmeTextField {
                             id: newProfileField
                             width: 150
@@ -279,11 +328,25 @@ Window {
                             font.pixelSize: 10
                         }
                         Text {
+                            width: 232
+                            elide: Text.ElideMiddle
+                            text: {
+                                var configured = app.itemDataPaths[verCombo.selKey] || "";
+                                return configured !== "" ? "items.toml: " + configured : "items.toml: (not configured)";
+                            }
+                            color: "#999"
+                            font.pixelSize: 10
+                        }
+                        Text {
                             font.pixelSize: 11
                             visible: parent.selFolder !== ""
-                            property bool ok: parent.selFiles.dat && parent.selFiles.spr && parent.selFiles.otb
+                            property bool standardOk: parent.selFiles.dat && parent.selFiles.spr && parent.selFiles.otb
+                            property bool blackTekOk: parent.selFiles.dat && parent.selFiles.spr && app.itemTomlPath(verCombo.selKey)
+                            property bool ok: sourceCombo.sourceKey === "blacktek" ? blackTekOk : standardOk
                             color: ok ? "#7fdc8f" : "#e08a6a"
-                            text: ok ? "OK: dat / spr / otb found" : "Missing: " + (parent.selFiles.dat ? "" : "dat ") + (parent.selFiles.spr ? "" : "spr ") + (parent.selFiles.otb ? "" : "otb ") + "missing"
+                            text: sourceCombo.sourceKey === "blacktek"
+                                  ? (blackTekOk ? "OK: dat / spr / items.toml found" : "Missing: dat / spr / items.toml")
+                                  : (standardOk ? "OK: dat / spr / items.otb found" : "Missing: dat / spr / items.otb")
                         }
 
                         Text {
@@ -389,7 +452,7 @@ Window {
                                 onClicked: {
                                     if (!Backend.fileTools.exists(modelData))
                                         return;
-                                    startupScreen.beginLoadMap(modelData, verCombo.selKey);
+                                    startupScreen.beginLoadMap(modelData, "", "");
                                 }
                             }
                         }
@@ -551,8 +614,21 @@ Window {
 
     FolderDialog {
         id: versionFolderDialogStartup
-        title: "Select client folder for " + app.profileLabel(app.pendingKey) + " (Tibia.dat / Tibia.spr / items.otb)"
+        title: "Select client folder for " + app.profileLabel(app.pendingKey) + " (Tibia.dat / Tibia.spr)"
         onAccepted: app.onVersionFolderPicked(selectedFolder)
+    }
+
+    FileDialog {
+        id: itemDataFileDialogStartup
+        title: "Select BlackTek items.toml"
+        nameFilters: ["TOML files (items.toml *.toml)", "All files (*)"]
+        onAccepted: app.onItemDataPicked(selectedFile)
+    }
+
+    FolderDialog {
+        id: itemDataDialogStartup
+        title: "Select BlackTek items.toml file or its containing folder"
+        onAccepted: app.onItemDataPicked(selectedFolder)
     }
 
     FileDialog {
@@ -560,7 +636,8 @@ Window {
         title: "Open .otbm map"
         nameFilters: ["OTBM maps (*.otbm)", "All files (*)"]
         onAccepted: startupScreen.beginLoadMap(Backend.fileTools.toLocalFile(selectedFile),
-                                               verCombo.selKey)
+                                               verCombo.selKey,
+                                               sourceCombo.sourceKey)
     }
 
     NewMapDialog {

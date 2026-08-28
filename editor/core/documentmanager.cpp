@@ -50,13 +50,15 @@ OtbmReader *DocumentManager::current() const
 QVariantList DocumentManager::tabs() const
 {
     QVariantList out;
-    for (const OtbmReader *doc : m_docs) {
+    for (OtbmReader *doc : m_docs) {
         QVariantMap t;
         const QString path = doc->filePath();
         t.insert(QStringLiteral("title"),
                  path.isEmpty() ? QStringLiteral("(new map)") : QFileInfo(path).fileName());
         t.insert(QStringLiteral("dirty"), doc->isDirty());
         t.insert(QStringLiteral("loaded"), doc->isLoaded());
+        t.insert(QStringLiteral("itemSource"),
+                 m_itemSources.value(doc, QStringLiteral("standard")));
         out.push_back(t);
     }
     return out;
@@ -67,6 +69,7 @@ OtbmReader *DocumentManager::newDocument()
     auto *doc = new OtbmReader(this);
     hookDocument(doc);
     m_docs.push_back(doc);
+    m_itemSources.insert(doc, QStringLiteral("standard"));
     m_current = static_cast<int>(m_docs.size()) - 1;
     emit tabsChanged();
     emit currentChanged();
@@ -85,6 +88,7 @@ bool DocumentManager::closeDocument(int i)
     m_lastEditMs.remove(doc);
     m_lastRecoveryMs.remove(doc);
     m_profileKeys.remove(doc);
+    m_itemSources.remove(doc);
     removeRecoveryFiles(id);
 
     doc->deleteLater();
@@ -215,6 +219,8 @@ void DocumentManager::loadPreviousSession()
         entry.insert(QStringLiteral("size"), recoveryInfo.size());
         entry.insert(QStringLiteral("profileKey"),
                      object.value(QStringLiteral("profileKey")).toString());
+        entry.insert(QStringLiteral("itemSource"),
+                     object.value(QStringLiteral("itemSource")).toString(QStringLiteral("standard")));
         entry.insert(QStringLiteral("spawnFile"),
                      object.value(QStringLiteral("spawnFile")).toString());
         entry.insert(QStringLiteral("houseFile"),
@@ -240,6 +246,7 @@ void DocumentManager::writeSession(bool cleanExit)
         object.insert(QStringLiteral("dirty"), doc->isDirty());
         object.insert(QStringLiteral("loaded"), doc->isLoaded());
         object.insert(QStringLiteral("profileKey"), m_profileKeys.value(doc));
+        object.insert(QStringLiteral("itemSource"), m_itemSources.value(doc, QStringLiteral("standard")));
         object.insert(QStringLiteral("spawnFile"), doc->spawnFile());
         object.insert(QStringLiteral("houseFile"), doc->houseFile());
         documents.append(object);
@@ -256,6 +263,8 @@ void DocumentManager::writeSession(bool cleanExit)
         object.insert(QStringLiteral("pending"), true);
         object.insert(QStringLiteral("profileKey"),
                       entry.value(QStringLiteral("profileKey")).toString());
+        object.insert(QStringLiteral("itemSource"),
+                      entry.value(QStringLiteral("itemSource"), QStringLiteral("standard")).toString());
         object.insert(QStringLiteral("spawnFile"),
                       entry.value(QStringLiteral("spawnFile")).toString());
         object.insert(QStringLiteral("houseFile"),
@@ -342,16 +351,20 @@ bool DocumentManager::adoptCurrentRecovery(const QString &recoveryId,
     m_documentIds[doc] = recoveryId;
     QString spawnFile;
     QString houseFile;
+    QString itemSource = QStringLiteral("standard");
     for (int i = 0; i < m_recoveries.size(); ++i) {
         const QVariantMap entry = m_recoveries[i].toMap();
         if (entry.value(QStringLiteral("id")).toString() == recoveryId) {
             spawnFile = entry.value(QStringLiteral("spawnFile")).toString();
             houseFile = entry.value(QStringLiteral("houseFile")).toString();
+            itemSource = entry.value(QStringLiteral("itemSource"), QStringLiteral("standard")).toString();
             m_recoveries.removeAt(i);
             break;
         }
     }
     doc->adoptRecoveryIdentity(originalPath, spawnFile, houseFile);
+    m_itemSources[doc] = itemSource == QLatin1String("blacktek")
+        ? QStringLiteral("blacktek") : QStringLiteral("standard");
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     m_lastEditMs[doc] = now;
     m_lastRecoveryMs[doc] = now;
@@ -366,6 +379,18 @@ void DocumentManager::setCurrentProfileKey(const QString &profileKey)
     OtbmReader *doc = current();
     if (!doc || m_profileKeys.value(doc) == profileKey) return;
     m_profileKeys[doc] = profileKey;
+    writeSession(false);
+    emit documentMetadataChanged();
+}
+
+void DocumentManager::setCurrentItemSource(const QString &itemSource)
+{
+    OtbmReader *doc = current();
+    if (!doc) return;
+    const QString normalized = itemSource.compare(QLatin1String("blacktek"), Qt::CaseInsensitive) == 0
+        ? QStringLiteral("blacktek") : QStringLiteral("standard");
+    if (m_itemSources.value(doc, QStringLiteral("standard")) == normalized) return;
+    m_itemSources[doc] = normalized;
     writeSession(false);
     emit documentMetadataChanged();
 }
@@ -400,4 +425,9 @@ QString DocumentManager::currentDocumentId() const
 QString DocumentManager::currentProfileKey() const
 {
     return m_profileKeys.value(current());
+}
+
+QString DocumentManager::currentItemSource() const
+{
+    return m_itemSources.value(current(), QStringLiteral("standard"));
 }

@@ -14,6 +14,7 @@ Item {
     required property var appWindow
     required property var startupWindow
     required property var versionFolderDialog
+    required property var itemDataDialog
     required property var saveDialog
     required property var closeTabConfirm
     required property var appCloseConfirm
@@ -22,10 +23,12 @@ Item {
     property var recentMaps: []
     property string pendingMapPath: ""
     property string pendingKey: ""
+    property string pendingItemSource: "standard"
     property var pendingNewMap: null
     property string savedToast: ""
     property string activeLoadPath: ""
     property string activePreferredProfileKey: ""
+    property string activePreferredItemSource: ""
     property bool waitingForAtlas: false
     property string atlasCompletionPath: ""
     property bool recoveringSession: false
@@ -42,11 +45,13 @@ Item {
             if (path !== controller.activeLoadPath)
                 return;
             const preferred = controller.activePreferredProfileKey;
+            const preferredSource = controller.activePreferredItemSource;
             controller.activeLoadPath = "";
             controller.activePreferredProfileKey = "";
+            controller.activePreferredItemSource = "";
             if (!success)
                 return;
-            controller.completeLoadedMap(path, preferred);
+            controller.completeLoadedMap(path, preferred, preferredSource);
         }
         function onAtlasBuildFinished(success, error) {
             if (!controller.waitingForAtlas)
@@ -92,7 +97,8 @@ Item {
         recoveryQueue = queue;
         startupWindow.beginRecoveryLoad(activeRecovery.recoveryPath);
         if (!loadEverything(activeRecovery.recoveryPath,
-                            activeRecovery.profileKey || "")) {
+                            activeRecovery.profileKey || "",
+                            activeRecovery.itemSource || "")) {
             showToast("Could not recover " + activeRecovery.title);
             activeRecovery = null;
             Qt.callLater(recoverNextDocument);
@@ -128,29 +134,30 @@ Item {
         toastTimer.restart();
     }
 
-    function createNewMap(key, width, height) {
-        if (!profiles.ensureClientVersion(key)) {
+    function createNewMap(key, width, height, itemSource) {
+        itemSource = profiles.normalizeItemSource(itemSource);
+        if (!profiles.ensureClientVersion(key, itemSource)) {
             pendingNewMap = {
                 key: key,
                 w: width,
-                h: height
+                h: height,
+                itemSource: itemSource
             };
             pendingKey = String(key);
-            if (started)
-                versionFolderDialog.open();
-            else
-                startupWindow.openVersionFolderDialog();
+            pendingItemSource = itemSource;
+            openDependencyDialog(key, itemSource);
             return;
         }
         if (Backend.otbmReader.loaded || Backend.otbmReader.filePath !== "")
             Backend.docMgr.newDocument();
+        Backend.docMgr.setCurrentItemSource(itemSource);
         Backend.otbmReader.newMap(width, height, profiles.profileVer(key), Backend.otbReader.majorVersion, Backend.otbReader.minorVersion);
         Backend.docMgr.setCurrentProfileKey(String(key));
         mapView.centerOnTile(Math.floor(width / 2), Math.floor(height / 2), 7);
         started = true;
     }
 
-    function loadEverything(mapPath, preferredProfileKey) {
+    function loadEverything(mapPath, preferredProfileKey, preferredItemSource) {
         if (mapPath === "")
             return false;
 
@@ -158,8 +165,11 @@ Item {
         if (existing >= 0) {
             if (existing !== Backend.docMgr.currentIndex)
                 Backend.docMgr.currentIndex = existing;
+            if (preferredItemSource !== undefined && preferredItemSource !== null
+                && String(preferredItemSource) !== "")
+                Backend.docMgr.setCurrentItemSource(preferredItemSource);
             if (Backend.docMgr.current.loaded)
-                return completeLoadedMap(mapPath, preferredProfileKey);
+                return completeLoadedMap(mapPath, preferredProfileKey, preferredItemSource);
         }
 
         if (Backend.otbmReader.loaded && Backend.otbmReader.filePath !== mapPath)
@@ -168,26 +178,36 @@ Item {
         activePreferredProfileKey = preferredProfileKey === undefined
                                   || preferredProfileKey === null
                                   ? "" : String(preferredProfileKey);
+        activePreferredItemSource = preferredItemSource === undefined
+                                  || preferredItemSource === null
+                                  ? "" : profiles.normalizeItemSource(preferredItemSource);
+        if (activePreferredItemSource !== "")
+            Backend.docMgr.setCurrentItemSource(activePreferredItemSource);
         if (!mapView.loadMap(mapPath)) {
             activeLoadPath = "";
             activePreferredProfileKey = "";
+            activePreferredItemSource = "";
             return false;
         }
         return true;
     }
 
-    function completeLoadedMap(mapPath, preferredProfileKey) {
-        if (!profiles.ensureClientLoaded(Backend.otbmReader, preferredProfileKey)) {
+    function completeLoadedMap(mapPath, preferredProfileKey, preferredItemSource) {
+        if (!profiles.ensureClientLoaded(Backend.otbmReader, preferredProfileKey, preferredItemSource)) {
             if (Backend.otbmReader.loading)
                 Backend.otbmReader.finishLoading(false);
             pendingMapPath = mapPath;
             var detectedVersion = Backend.otbmReader.suggestedClientVersion() > 0 ? Backend.otbmReader.suggestedClientVersion() : 772;
             var requestedKey = preferredProfileKey === undefined || preferredProfileKey === null ? "" : String(preferredProfileKey);
-            pendingKey = requestedKey !== "" && profiles.profileVer(requestedKey) === detectedVersion ? requestedKey : profiles.resolveKeyForVersion(detectedVersion);
-            if (started)
-                versionFolderDialog.open();
-            else
-                startupWindow.openVersionFolderDialog();
+            var remembered = profiles.mapProfileFor(mapPath);
+            var rememberedKey = remembered ? remembered.profileKey : "";
+            pendingKey = requestedKey !== "" && profiles.profileVer(requestedKey) === detectedVersion
+                ? requestedKey
+                : rememberedKey !== "" ? rememberedKey : profiles.resolveKeyForVersion(detectedVersion);
+            pendingItemSource = profiles.normalizeItemSource(preferredItemSource
+                || (remembered ? remembered.itemSource : "")
+                || Backend.docMgr.currentItemSource || "standard");
+            openDependencyDialog(pendingKey, pendingItemSource);
             return false;
         }
 
@@ -205,9 +225,11 @@ Item {
             Backend.docMgr.adoptCurrentRecovery(recovery.id,
                                                 recovery.originalPath || "");
             Backend.docMgr.setCurrentProfileKey(profiles.loadedClientKey);
+            Backend.docMgr.setCurrentItemSource(profiles.loadedItemSource);
             if (recovery.originalPath) {
                 profiles.rememberMapProfile(recovery.originalPath,
-                                            profiles.loadedClientKey);
+                                            profiles.loadedClientKey,
+                                            profiles.loadedItemSource);
                 addRecent(recovery.originalPath);
             }
             if (Backend.otbmReader.loading)
@@ -216,7 +238,9 @@ Item {
             Qt.callLater(recoverNextDocument);
             return true;
         }
-        profiles.rememberMapProfile(mapPath, profiles.loadedClientKey);
+        Backend.docMgr.setCurrentItemSource(profiles.loadedItemSource);
+        profiles.rememberMapProfile(mapPath, profiles.loadedClientKey,
+                                    profiles.loadedItemSource);
         Backend.docMgr.setCurrentProfileKey(profiles.loadedClientKey);
         addRecent(mapPath);
         started = true;
@@ -241,15 +265,53 @@ Item {
         var mapPath = pendingMapPath;
         pendingMapPath = "";
         pendingKey = "";
+        var pickedSource = pendingItemSource;
+        pendingItemSource = "standard";
         if (mapPath !== "") {
             if (Backend.otbmReader.loaded && Backend.otbmReader.filePath === mapPath)
-                completeLoadedMap(mapPath, pickedKey);
+                completeLoadedMap(mapPath, pickedKey, pickedSource);
             else
-                loadEverything(mapPath, pickedKey);
+                loadEverything(mapPath, pickedKey, pickedSource);
         } else if (pendingNewMap) {
             var newMap = pendingNewMap;
             pendingNewMap = null;
-            createNewMap(newMap.key, newMap.w, newMap.h);
+            createNewMap(newMap.key, newMap.w, newMap.h, newMap.itemSource);
+        }
+    }
+
+    function onItemDataPicked(pathUrl) {
+        var path = Backend.fileTools.toLocalFile(pathUrl);
+        if (!path) return;
+        var pickedKey = pendingKey;
+        var pickedSource = pendingItemSource;
+        profiles.setItemDataPath(pickedKey, path);
+        pendingKey = "";
+        pendingItemSource = "standard";
+        var mapPath = pendingMapPath;
+        pendingMapPath = "";
+        if (mapPath !== "") {
+            if (Backend.otbmReader.loaded && Backend.otbmReader.filePath === mapPath)
+                completeLoadedMap(mapPath, pickedKey, pickedSource);
+            else
+                loadEverything(mapPath, pickedKey, pickedSource);
+        } else if (pendingNewMap) {
+            var newMap = pendingNewMap;
+            pendingNewMap = null;
+            createNewMap(newMap.key, newMap.w, newMap.h, newMap.itemSource);
+        }
+    }
+
+    function openDependencyDialog(key, itemSource) {
+        var files = profiles.clientFiles(profiles.clientPaths[String(key)] || "");
+        if (profiles.lastLoadError)
+            showToast(profiles.lastLoadError);
+        if (itemSource === "blacktek" && files.dat && files.spr) {
+            if (started) itemDataDialog.open();
+            else startupWindow.openItemDataDialog();
+        } else if (started) {
+            versionFolderDialog.open();
+        } else {
+            startupWindow.openVersionFolderDialog();
         }
     }
 
@@ -260,7 +322,9 @@ Item {
         }
         Backend.otbmReader.applyClientVersions(profiles.loadedClientVersion, Backend.otbReader.majorVersion, Backend.otbReader.minorVersion);
         if (Backend.otbmReader.saveFile(Backend.otbmReader.filePath)) {
-            profiles.rememberMapProfile(Backend.otbmReader.filePath, profiles.loadedClientKey);
+            profiles.rememberMapProfile(Backend.otbmReader.filePath,
+                                        profiles.loadedClientKey,
+                                        profiles.loadedItemSource);
             showToast("Saved: " + Backend.fileTools.fileName(Backend.otbmReader.filePath));
         }
     }
@@ -270,7 +334,8 @@ Item {
         Backend.otbmReader.applyClientVersions(profiles.loadedClientVersion, Backend.otbReader.majorVersion, Backend.otbReader.minorVersion);
         if (Backend.otbmReader.saveFile(path)) {
             addRecent(path);
-            profiles.rememberMapProfile(path, profiles.loadedClientKey);
+            profiles.rememberMapProfile(path, profiles.loadedClientKey,
+                                        profiles.loadedItemSource);
             showToast("Saved: " + Backend.fileTools.fileName(path));
             if (appCloseSaveAsPending) {
                 appCloseSaveAsPending = false;
@@ -301,7 +366,9 @@ Item {
         if (Backend.docMgr.closeDocument(index))
             started = false;
         else
-            profiles.ensureClientLoaded(Backend.docMgr.current);
+            profiles.ensureClientLoaded(Backend.docMgr.current,
+                                        Backend.docMgr.currentProfileKey,
+                                        Backend.docMgr.currentItemSource);
     }
 
     function dirtyTabIndices() {
@@ -370,7 +437,9 @@ Item {
 
         Backend.docMgr.currentIndex = index;
         var reader = Backend.docMgr.current;
-        if (!reader || !profiles.ensureClientLoaded(reader)) {
+        if (!reader || !profiles.ensureClientLoaded(reader,
+                                                    Backend.docMgr.currentProfileKey,
+                                                    Backend.docMgr.currentItemSource)) {
             abortSaveAllAndClose("Not all maps were saved: client data is missing");
             return;
         }
@@ -384,7 +453,8 @@ Item {
             abortSaveAllAndClose("Not all maps were saved");
             return;
         }
-        profiles.rememberMapProfile(reader.filePath, profiles.loadedClientKey);
+        profiles.rememberMapProfile(reader.filePath, profiles.loadedClientKey,
+                                    profiles.loadedItemSource);
         Qt.callLater(saveNextAndClose);
     }
 
@@ -392,7 +462,10 @@ Item {
         target: Backend.docMgr
         function onCurrentChanged() {
             if (Backend.docMgr.current && Backend.docMgr.current.loaded)
-                controller.profiles.ensureClientLoaded(Backend.docMgr.current);
+                controller.profiles.ensureClientLoaded(
+                    Backend.docMgr.current,
+                    Backend.docMgr.currentProfileKey,
+                    Backend.docMgr.currentItemSource);
         }
         function onAutosaveFailed(title, error) {
             controller.showToast("Autosave failed"

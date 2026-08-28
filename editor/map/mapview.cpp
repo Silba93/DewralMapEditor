@@ -326,6 +326,23 @@ void MapView::rebuildAtlas()
     buildAtlasImage();
 }
 
+void MapView::refreshItemData()
+{
+    m_loadedMapServerIdsReady = false;
+    m_loadedMapServerIds.clear();
+    clearChunkQuadCache();
+    m_minimapService.invalidate();
+    ++m_dataVersion;
+    {
+        std::lock_guard<std::recursive_mutex> dlk(m_dataMutex);
+        buildAtlasImage();
+    }
+    m_floorDirty = true;
+    emit atlasChanged();
+    emit contentUpdated();
+    update();
+}
+
 void MapView::setOtbm(OtbmReader *reader)
 {
     if (m_otbm == reader) return;

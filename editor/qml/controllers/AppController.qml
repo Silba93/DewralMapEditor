@@ -11,6 +11,7 @@ Item {
     required property var appWindow
     required property var startupWindow
     required property var versionFolderDialog
+    required property var itemDataDialog
     required property var saveDialog
     required property var closeTabConfirm
     required property var appCloseConfirm
@@ -19,6 +20,7 @@ Item {
     property alias recentMaps: documents.recentMaps
     property alias pendingMapPath: documents.pendingMapPath
     property alias pendingKey: documents.pendingKey
+    property alias pendingItemSource: documents.pendingItemSource
     property alias savedToast: documents.savedToast
     property alias appCloseAllowed: documents.appCloseAllowed
     property alias appCloseSaveAsPending: documents.appCloseSaveAsPending
@@ -29,11 +31,14 @@ Item {
     }
 
     property alias clientPaths: profiles.clientPaths
+    property alias itemDataPaths: profiles.itemDataPaths
     property alias customProfiles: profiles.customProfiles
     property alias mapProfiles: profiles.mapProfiles
     property alias loadedClientVersion: profiles.loadedClientVersion
     property alias loadedClientKey: profiles.loadedClientKey
     property alias loadedClientFolder: profiles.loadedClientFolder
+    property alias loadedItemSource: profiles.loadedItemSource
+    property alias loadedItemTomlPath: profiles.loadedItemTomlPath
 
     property alias customPalettes: palettes.customPalettes
     property alias customPaletteNames: palettes.customPaletteNames
@@ -62,6 +67,7 @@ Item {
         appWindow: controller.appWindow
         startupWindow: controller.startupWindow
         versionFolderDialog: controller.versionFolderDialog
+        itemDataDialog: controller.itemDataDialog
         saveDialog: controller.saveDialog
         closeTabConfirm: controller.closeTabConfirm
         appCloseConfirm: controller.appCloseConfirm
@@ -95,20 +101,26 @@ Item {
     function clientFiles(folder) {
         return profiles.clientFiles(folder);
     }
+    function itemTomlPath(key) {
+        return profiles.itemTomlPath(key);
+    }
+    function setItemDataPath(key, path) {
+        profiles.setItemDataPath(key, path);
+    }
     function configuredProfileKeys() {
         return profiles.configuredProfileKeys();
     }
-    function ensureClientLoaded(reader, preferredKey) {
-        return profiles.ensureClientLoaded(reader, preferredKey);
+    function ensureClientLoaded(reader, preferredKey, preferredSource) {
+        return profiles.ensureClientLoaded(reader, preferredKey, preferredSource);
     }
-    function ensureClientVersion(key) {
-        return profiles.ensureClientVersion(key);
+    function ensureClientVersion(key, source) {
+        return profiles.ensureClientVersion(key, source);
     }
-    function rememberMapProfile(path, key) {
-        profiles.rememberMapProfile(path, key);
+    function rememberMapProfile(path, key, source) {
+        profiles.rememberMapProfile(path, key, source);
     }
-    function switchMapProfile(key) {
-        return profiles.switchMapProfile(key);
+    function switchMapProfile(key, source) {
+        return profiles.switchMapProfile(key, source);
     }
 
     function addCustomPalette(name) {
@@ -139,14 +151,17 @@ Item {
     function addRecent(path) {
         documents.addRecent(path);
     }
-    function createNewMap(key, width, height) {
-        documents.createNewMap(key, width, height);
+    function createNewMap(key, width, height, source) {
+        documents.createNewMap(key, width, height, source);
     }
-    function loadEverything(path, preferredKey) {
-        return documents.loadEverything(path, preferredKey);
+    function loadEverything(path, preferredKey, source) {
+        return documents.loadEverything(path, preferredKey, source);
     }
     function onVersionFolderPicked(folderUrl) {
         documents.onVersionFolderPicked(folderUrl);
+    }
+    function onItemDataPicked(pathUrl) {
+        documents.onItemDataPicked(pathUrl);
     }
     function saveMap() {
         documents.saveMap();

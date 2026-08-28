@@ -203,6 +203,7 @@ Window {
         appWindow: root
         startupWindow: startupScreen
         versionFolderDialog: versionFolderDialogMain
+        itemDataDialog: itemDataDialogMain
         saveDialog: saveDialog
         closeTabConfirm: closeTabConfirm
         appCloseConfirm: appCloseConfirm
@@ -590,8 +591,15 @@ Window {
 
     FolderDialog {
         id: versionFolderDialogMain
-        title: "Select client folder for " + app.profileLabel(app.pendingKey) + " (Tibia.dat / Tibia.spr / items.otb)"
+        title: "Select client folder for " + app.profileLabel(app.pendingKey) + " (Tibia.dat / Tibia.spr)"
         onAccepted: app.onVersionFolderPicked(selectedFolder)
+    }
+
+    FileDialog {
+        id: itemDataDialogMain
+        title: "Select BlackTek items.toml"
+        nameFilters: ["TOML files (items.toml *.toml)", "All files (*)"]
+        onAccepted: app.onItemDataPicked(selectedFile)
     }
 
     FileDialog {
@@ -951,6 +959,9 @@ Window {
         }
         function openVersionFolderDialog() {
             ensureWindow().openVersionFolderDialog();
+        }
+        function openItemDataDialog() {
+            ensureWindow().openItemDataDialog();
         }
         function beginRecoveryLoad(path) {
             ensureWindow().beginRecoveryLoad(path);

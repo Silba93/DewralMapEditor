@@ -3,6 +3,7 @@ import QtCore
 Settings {
     property string clientFolder: ""
     property string clientPathsJson: "{}"
+    property string itemDataPathsJson: "{}"
     property string customProfilesJson: "[]"
     property string mapProfilesJson: "{}"
     property string recentMapsJson: "[]"

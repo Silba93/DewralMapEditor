@@ -17,8 +17,10 @@ public:
 
     Q_INVOKABLE QString findByExt(const QString &folder, const QString &ext,
                                   const QString &preferred = QString()) const;
+    Q_INVOKABLE QString findToml(const QString &path) const;
     Q_INVOKABLE QString fileName(const QString &path) const;
     Q_INVOKABLE QString dirName(const QString &path) const;
+    Q_INVOKABLE QString canonicalPath(const QString &path) const;
     Q_INVOKABLE QString toLocalFile(const QUrl &url) const { return url.toLocalFile(); }
     Q_INVOKABLE void setClipboard(const QString &text) const;
     Q_INVOKABLE QString clipboardText() const;

@@ -7,6 +7,7 @@ DmeDialog {
 
     required property var app
     property string preferredProfileKey: app.loadedClientKey
+    property string preferredItemSource: app.loadedItemSource
 
     title: "New Map"
 
@@ -33,6 +34,7 @@ DmeDialog {
         profileKeys = keys;
         var idx = profileKeys.indexOf(preferredProfileKey);
         verCombo.currentIndex = idx >= 0 ? idx : profileKeys.length - 1;
+        sourceCombo.currentIndex = preferredItemSource === "blacktek" ? 1 : 0;
     }
 
     contentItem: Column {
@@ -53,6 +55,23 @@ DmeDialog {
                 model: root.profileKeys.map(function (k) {
                     return root.app.profileLabel(k);
                 })
+            }
+        }
+
+        Row {
+            spacing: 6
+            Text {
+                text: "Item data"
+                color: "#999"
+                font.pixelSize: 11
+                width: 90
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            DmeComboBox {
+                id: sourceCombo
+                width: 160
+                model: ["Standard", "BlackTek"]
+                readonly property string sourceKey: currentIndex === 1 ? "blacktek" : "standard"
             }
         }
 
@@ -96,7 +115,7 @@ DmeDialog {
                 enabled: verCombo.currentIndex >= 0
                 onClicked: {
                     root.close();
-                    root.app.createNewMap(root.profileKeys[verCombo.currentIndex], wField.value, hField.value);
+                    root.app.createNewMap(root.profileKeys[verCombo.currentIndex], wField.value, hField.value, sourceCombo.sourceKey);
                 }
             }
             DmeButton {

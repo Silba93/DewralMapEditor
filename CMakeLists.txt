@@ -25,6 +25,7 @@ if(DME_GIT_COMMIT STREQUAL "")
 endif()
 
 find_package(Qt6 COMPONENTS Core Gui Qml Quick OpenGL Network Widgets Concurrent REQUIRED)
+find_package(tomlplusplus CONFIG REQUIRED)
 qt_policy(SET QTP0001 NEW)
 
 add_library(OTFormats STATIC
@@ -60,6 +61,7 @@ target_link_libraries(OTFormats
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
+        tomlplusplus::tomlplusplus
 )
 
 target_include_directories(OTFormats PUBLIC libs/otformats)
@@ -223,6 +225,11 @@ if(BUILD_TESTING)
         libs/otformats editor/core)
     target_link_libraries(document_recovery_test PRIVATE OTFormats Qt6::Core)
     add_test(NAME document_recovery COMMAND document_recovery_test)
+    add_executable(otb_toml_loading_test EXCLUDE_FROM_ALL
+        tests/otb_toml_loading_test.cpp)
+    target_include_directories(otb_toml_loading_test PRIVATE libs/otformats)
+    target_link_libraries(otb_toml_loading_test PRIVATE OTFormats Qt6::Core)
+    add_test(NAME otb_toml_loading COMMAND otb_toml_loading_test)
     add_executable(creature_store_test EXCLUDE_FROM_ALL
         tests/creature_store_test.cpp
         editor/core/creaturestore.cpp)
@@ -233,7 +240,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(otbm_compact_storage otbm_editing_storage
                              otbm_background_load atlas_background_build map_path_builder
-                             document_recovery creature_store PROPERTIES
+                             document_recovery otb_toml_loading creature_store PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

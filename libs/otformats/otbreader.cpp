@@ -5,6 +5,12 @@
 #include "nodefilereader.h"
 
 #include <QSet>
+#include <QPair>
+
+#include <toml++/toml.hpp>
+
+#include <optional>
+#include <string_view>
 
 namespace {
 
@@ -151,6 +157,87 @@ QStringList collectOtbFlags(const OtbItem &item)
     return flags;
 }
 
+struct TomlOverlay {
+    QString name;
+    QString description;
+    QString type;
+    QString floorChange;
+    uint16_t rotateTo = 0;
+    uint16_t maxTextLength = 0;
+    bool hasName = false;
+    bool hasDescription = false;
+    bool hasType = false;
+    bool hasFloorChange = false;
+    bool hasRotateTo = false;
+    bool hasMaxTextLength = false;
+    bool hasBlockProjectile = false;
+    bool blockProjectile = false;
+    bool hasReadable = false;
+    bool readable = false;
+    bool hasWriteable = false;
+    bool writeable = false;
+    bool hasAllowDistRead = false;
+    bool allowDistRead = false;
+    bool hasPickupable = false;
+    bool pickupable = false;
+    bool hasMoveable = false;
+    bool moveable = false;
+    bool hasStackable = false;
+    bool stackable = false;
+};
+
+template <typename T>
+std::optional<T> tomlValue(const toml::table &table, std::string_view key)
+{
+    const toml::node *node = table.get(key);
+    return node ? node->value<T>() : std::nullopt;
+}
+
+void setOtbFlag(OtbItem &item, uint32_t flag, bool value)
+{
+    if (value) item.flags |= flag;
+    else item.flags &= ~flag;
+}
+
+void applyTomlType(OtbItem &item, const QString &rawType)
+{
+    const QString type = rawType.trimmed().toLower();
+    item.type = type;
+    if (type == QLatin1String("container"))
+        item.group = static_cast<uint8_t>(OtbItemGroup::Container);
+    else if (type == QLatin1String("door"))
+        item.group = static_cast<uint8_t>(OtbItemGroup::Door);
+    else if (type == QLatin1String("magicfield"))
+        item.group = static_cast<uint8_t>(OtbItemGroup::MagicField);
+    else if (type == QLatin1String("teleport"))
+        item.group = static_cast<uint8_t>(OtbItemGroup::Teleport);
+    else if (type == QLatin1String("key"))
+        item.group = static_cast<uint8_t>(OtbItemGroup::Key);
+    else if (type == QLatin1String("podium"))
+        item.group = static_cast<uint8_t>(OtbItemGroup::Podium);
+}
+
+QPair<uint32_t, uint32_t> itemVersionForClient(int clientVersion)
+{
+    static const QHash<int, QPair<uint32_t, uint32_t>> versions = {
+        {740, {1, 1}}, {750, {1, 1}}, {755, {1, 2}}, {760, {1, 3}},
+        {770, {1, 3}}, {780, {1, 4}}, {790, {1, 5}}, {792, {1, 6}},
+        {800, {2, 7}}, {810, {2, 8}}, {811, {2, 9}}, {820, {3, 10}},
+        {830, {3, 11}}, {840, {3, 12}}, {841, {3, 13}}, {842, {3, 14}},
+        {850, {3, 15}}, {854, {3, 17}}, {855, {3, 18}}, {860, {3, 20}},
+        {861, {3, 21}}, {862, {3, 22}}, {870, {3, 23}}, {871, {3, 24}},
+        {872, {3, 25}}, {873, {3, 26}}, {900, {3, 27}}, {910, {3, 28}},
+        {920, {3, 29}}, {940, {3, 30}}, {944, {3, 31}}, {946, {3, 35}},
+        {950, {3, 36}}, {952, {3, 37}}, {953, {3, 38}}, {954, {3, 39}},
+        {960, {3, 40}}, {961, {3, 41}}, {963, {3, 42}}, {970, {3, 43}},
+        {980, {3, 44}}, {981, {3, 45}}, {982, {3, 46}}, {983, {3, 47}},
+        {985, {3, 48}}, {986, {3, 49}}, {1010, {3, 50}}, {1020, {3, 51}},
+        {1021, {3, 52}}, {1030, {3, 53}}, {1031, {3, 54}}, {1041, {3, 55}},
+        {1077, {3, 56}}, {1098, {3, 57}}, {10100, {3, 58}}
+    };
+    return versions.value(clientVersion, {0, 0});
+}
+
 }
 
 OtbReader::OtbReader(QObject *parent)
@@ -209,6 +296,8 @@ void OtbReader::setItemsXml(ItemsXmlReader *itemsXml)
 
 void OtbReader::reset()
 {
+    const bool sourceWasToml = m_itemSource != QLatin1String("standard");
+    m_itemSource = QStringLiteral("standard");
     beginResetModel();
     m_items.clear();
     m_serverIdToRow.clear();
@@ -223,6 +312,7 @@ void OtbReader::reset()
     emit itemCountChanged();
     emit loadedChanged();
     emit errorChanged();
+    if (sourceWasToml) emit sourceChanged();
 }
 
 void OtbReader::setError(const QString &message)
@@ -364,6 +454,218 @@ bool OtbReader::loadFile(const QString &path)
     return true;
 }
 
+bool OtbReader::loadTomlFile(const QString &path, int clientVersion)
+{
+    reset();
+
+    if (!m_datReader || !m_datReader->isLoaded()) {
+        setError(QStringLiteral("BlackTek item loading requires a loaded DAT file"));
+        return false;
+    }
+    if (m_itemsXml) m_itemsXml->clear();
+
+    toml::table document;
+    try {
+        document = toml::parse_file(path.toStdString());
+    } catch (const toml::parse_error &error) {
+        setError(QStringLiteral("Could not parse items.toml: %1")
+                     .arg(QString::fromUtf8(error.description().data(),
+                                             static_cast<int>(error.description().size()))));
+        return false;
+    }
+
+    const toml::array *items = document["items"].as_array();
+    if (!items) {
+        setError(QStringLiteral("items.toml is missing the 'items' array"));
+        return false;
+    }
+
+    QHash<int, TomlOverlay> overlays;
+    for (const toml::node &node : *items) {
+        const toml::table *item = node.as_table();
+        if (!item) continue;
+
+        const auto id = tomlValue<int64_t>(*item, "id");
+        if (!id || *id <= 0 || *id > 65535) continue;
+
+        TomlOverlay overlay;
+        if (const auto value = tomlValue<std::string>(*item, "name")) {
+            overlay.name = QString::fromStdString(*value);
+            overlay.hasName = true;
+        }
+        if (const auto value = tomlValue<std::string>(*item, "description")) {
+            overlay.description = QString::fromStdString(*value);
+            overlay.hasDescription = true;
+        }
+        if (const auto value = tomlValue<std::string>(*item, "type")) {
+            overlay.type = QString::fromStdString(*value);
+            overlay.hasType = true;
+        }
+        if (const auto value = tomlValue<std::string>(*item, "floorchange")) {
+            overlay.floorChange = QString::fromStdString(*value);
+            overlay.hasFloorChange = true;
+        }
+        if (const auto value = tomlValue<int64_t>(*item, "rotateTo")) {
+            if (*value > 0 && *value <= 65535) {
+                overlay.rotateTo = static_cast<uint16_t>(*value);
+                overlay.hasRotateTo = true;
+            }
+        }
+        if (const auto value = tomlValue<int64_t>(*item, "maxTextLen")) {
+            if (*value >= 0 && *value <= 65535) {
+                overlay.maxTextLength = static_cast<uint16_t>(*value);
+                overlay.hasMaxTextLength = true;
+            }
+        }
+
+        const auto readBool = [item](std::string_view key, bool &present, bool &value) {
+            if (const auto parsed = tomlValue<bool>(*item, key)) {
+                present = true;
+                value = *parsed;
+            }
+        };
+        readBool("blockprojectile", overlay.hasBlockProjectile, overlay.blockProjectile);
+        readBool("readable", overlay.hasReadable, overlay.readable);
+        readBool("writeable", overlay.hasWriteable, overlay.writeable);
+        readBool("allowDistRead", overlay.hasAllowDistRead, overlay.allowDistRead);
+        readBool("pickupable", overlay.hasPickupable, overlay.pickupable);
+        readBool("moveable", overlay.hasMoveable, overlay.moveable);
+        readBool("stackable", overlay.hasStackable, overlay.stackable);
+        overlays.insert(static_cast<int>(*id), std::move(overlay));
+    }
+
+    std::vector<OtbItem> parsedItems;
+    parsedItems.reserve(m_datReader->items().size());
+    for (const ClientItem &client : m_datReader->items()) {
+        if (client.id == 0) continue;
+
+        OtbItem item;
+        item.server_id = client.id;
+        item.client_id = client.id;
+        item.group = client.is_ground
+            ? static_cast<uint8_t>(OtbItemGroup::Ground)
+            : client.is_container
+                ? static_cast<uint8_t>(OtbItemGroup::Container)
+                : client.is_fluid_container
+                    ? static_cast<uint8_t>(OtbItemGroup::Fluid)
+                    : client.is_fluid
+                        ? static_cast<uint8_t>(OtbItemGroup::Splash)
+                        : static_cast<uint8_t>(OtbItemGroup::None);
+        item.speed = client.ground_speed;
+        item.max_text_length = client.max_text_length;
+        item.light_level = static_cast<uint8_t>(client.light_level);
+        item.light_color = static_cast<uint8_t>(client.light_color);
+        item.stack_order = client.is_ground ? 1
+                         : client.is_on_bottom ? 2
+                         : client.is_on_top ? 3 : 0;
+        item.is_unpassable = client.is_unpassable;
+        item.blocks_missiles = client.blocks_missiles;
+        item.blocks_pathfinder = client.blocks_pathfinder;
+        item.has_elevation = client.has_elevation;
+        item.is_useable = client.is_useable;
+        item.is_pickupable = client.is_pickupable;
+        item.is_moveable = !client.is_unmoveable;
+        item.is_stackable = client.is_stackable;
+        item.always_on_top = client.is_on_bottom || client.is_on_top;
+        item.is_readable = client.is_writable;
+        item.is_rotatable = client.is_rotatable;
+        item.is_hangable = client.is_hangable;
+        item.hook_east = client.is_horizontal;
+        item.hook_south = client.is_vertical;
+
+        setOtbFlag(item, 1u << 0, item.is_unpassable);
+        setOtbFlag(item, 1u << 1, item.blocks_missiles);
+        setOtbFlag(item, 1u << 2, item.blocks_pathfinder);
+        setOtbFlag(item, 1u << 3, item.has_elevation);
+        setOtbFlag(item, 1u << 4, item.is_useable);
+        setOtbFlag(item, 1u << 5, item.is_pickupable);
+        setOtbFlag(item, 1u << 6, !item.is_moveable);
+        setOtbFlag(item, 1u << 7, item.is_stackable);
+        setOtbFlag(item, 1u << 13, item.always_on_top);
+        setOtbFlag(item, 1u << 14, item.is_readable);
+        setOtbFlag(item, 1u << 15, item.is_rotatable);
+        setOtbFlag(item, 1u << 16, item.is_hangable);
+        setOtbFlag(item, 1u << 17, item.hook_east);
+        setOtbFlag(item, 1u << 18, item.hook_south);
+        if (client.floor_change) setOtbFlag(item, 1u << 8, true);
+
+        const auto overlayIt = overlays.constFind(item.server_id);
+        if (overlayIt != overlays.cend()) {
+            const TomlOverlay &overlay = overlayIt.value();
+            if (overlay.hasName) item.name = overlay.name;
+            if (overlay.hasDescription) item.description = overlay.description;
+            if (overlay.hasType) applyTomlType(item, overlay.type);
+            if (overlay.hasRotateTo) {
+                item.rotate_to = overlay.rotateTo;
+                item.is_rotatable = true;
+                setOtbFlag(item, 1u << 15, true);
+            }
+            if (overlay.hasMaxTextLength) item.max_text_length = overlay.maxTextLength;
+            if (overlay.hasBlockProjectile) {
+                item.blocks_missiles = overlay.blockProjectile;
+                setOtbFlag(item, 1u << 1, item.blocks_missiles);
+            }
+            if (overlay.hasReadable) item.is_readable = overlay.readable;
+            if (overlay.hasWriteable) {
+                item.is_readable = overlay.writeable;
+                item.group = overlay.writeable
+                    ? static_cast<uint8_t>(OtbItemGroup::Writeable) : item.group;
+            }
+            setOtbFlag(item, 1u << 14, item.is_readable);
+            if (overlay.hasAllowDistRead) setOtbFlag(item, 1u << 20, overlay.allowDistRead);
+            if (overlay.hasPickupable) {
+                item.is_pickupable = overlay.pickupable;
+                setOtbFlag(item, 1u << 5, item.is_pickupable);
+            }
+            if (overlay.hasMoveable) {
+                item.is_moveable = overlay.moveable;
+                setOtbFlag(item, 1u << 6, !item.is_moveable);
+            }
+            if (overlay.hasStackable) {
+                item.is_stackable = overlay.stackable;
+                setOtbFlag(item, 1u << 7, item.is_stackable);
+            }
+            if (overlay.hasFloorChange) {
+                item.flags &= ~((1u << 8) | (1u << 9) | (1u << 10)
+                                | (1u << 11) | (1u << 12));
+                const QString direction = overlay.floorChange.toLower();
+                const uint32_t directionFlag = direction == QLatin1String("north") ? (1u << 9)
+                    : direction == QLatin1String("east") ? (1u << 10)
+                    : direction == QLatin1String("south") ? (1u << 11)
+                    : direction == QLatin1String("west") ? (1u << 12) : (1u << 8);
+                item.flags |= directionFlag;
+            }
+        }
+        parsedItems.push_back(std::move(item));
+    }
+
+    beginResetModel();
+    m_items = std::move(parsedItems);
+    m_serverIdToRow.clear();
+    m_clientIdToRow.clear();
+    for (int row = 0; row < static_cast<int>(m_items.size()); ++row) {
+        const OtbItem &item = m_items[static_cast<size_t>(row)];
+        m_serverIdToRow.insert(item.server_id, row);
+        m_clientIdToRow.insert(item.client_id, row);
+    }
+    const auto version = itemVersionForClient(clientVersion);
+    m_majorVersion = version.first;
+    m_minorVersion = version.second;
+    m_buildNumber = 0;
+    m_loaded = !m_items.empty();
+    m_itemSource = QStringLiteral("blacktek");
+    endResetModel();
+
+    emit itemCountChanged();
+    emit loadedChanged();
+    emit sourceChanged();
+    if (!m_loaded) {
+        setError(QStringLiteral("items.toml produced no DAT item definitions"));
+        return false;
+    }
+    return true;
+}
+
 int OtbReader::clientIdForServerId(int serverId) const
 {
     auto it = m_serverIdToRow.find(static_cast<uint16_t>(serverId));
@@ -396,7 +698,9 @@ QString OtbReader::groupNameForServerId(int serverId) const
 {
     auto it = m_serverIdToRow.find(static_cast<uint16_t>(serverId));
     if (it == m_serverIdToRow.end()) {
-        return QStringLiteral("(missing from items.otb)");
+        return m_itemSource == QLatin1String("blacktek")
+            ? QStringLiteral("(missing from DAT/items.toml)")
+            : QStringLiteral("(missing from items.otb)");
     }
     return groupName(m_items[static_cast<size_t>(it.value())].group);
 }
@@ -451,6 +755,12 @@ bool OtbReader::isTeleportItem(int serverId) const
         return true;
     }
 
+    const int row = rowForServerId(serverId);
+    if (row >= 0 && !m_items[static_cast<size_t>(row)].type.isEmpty()
+        && m_items[static_cast<size_t>(row)].type == QLatin1String("teleport")) {
+        return true;
+    }
+
     static const int kKnownTeleportIds[] = { 1387 };
     for (int id : kKnownTeleportIds) {
         if (serverId == id) return true;
@@ -460,7 +770,12 @@ bool OtbReader::isTeleportItem(int serverId) const
 
 int OtbReader::rotateToForServerId(int serverId) const
 {
-    return m_itemsXml ? m_itemsXml->rotateToForServerId(serverId) : 0;
+    if (m_itemsXml) {
+        const int xmlRotation = m_itemsXml->rotateToForServerId(serverId);
+        if (xmlRotation > 0) return xmlRotation;
+    }
+    const int row = rowForServerId(serverId);
+    return row >= 0 ? m_items[static_cast<size_t>(row)].rotate_to : 0;
 }
 
 QString OtbReader::nameForServerId(int serverId) const
@@ -568,6 +883,9 @@ QVariantMap OtbReader::findItems(const QVariantMap &query) const
         properties.insert(value.toString().toLower());
 
     auto matchesType = [this, &type](const OtbItem &item) {
+        QString itemType = item.type;
+        itemType.remove(QLatin1Char(' '));
+        itemType.remove(QLatin1Char('_'));
         QString xmlType =
             m_itemsXml ? m_itemsXml->typeForServerId(item.server_id).toLower()
                        : QString();
@@ -577,17 +895,19 @@ QVariantMap OtbReader::findItems(const QVariantMap &query) const
             || type == QLatin1String("mailbox")
             || type == QLatin1String("trashholder")
             || type == QLatin1String("bed")) {
-            return xmlType == type;
+            return itemType == type || xmlType == type;
         }
         if (type == QLatin1String("container"))
             return item.group == static_cast<uint8_t>(OtbItemGroup::Container);
         if (type == QLatin1String("door"))
             return item.group == static_cast<uint8_t>(OtbItemGroup::Door)
+                   || itemType == QLatin1String("door")
                    || xmlType == QLatin1String("door");
         if (type == QLatin1String("magicfield"))
             return item.group == static_cast<uint8_t>(OtbItemGroup::MagicField);
         if (type == QLatin1String("teleport"))
             return item.group == static_cast<uint8_t>(OtbItemGroup::Teleport)
+                   || itemType == QLatin1String("teleport")
                    || xmlType == QLatin1String("teleport");
         if (type == QLatin1String("key"))
             return item.group == static_cast<uint8_t>(OtbItemGroup::Key);

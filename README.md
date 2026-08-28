@@ -7,9 +7,11 @@ multi-floor Tibia maps.
 > **Development note:** This project was developed primarily with assistance
 > from Claude Code Fable 5, Claude Opus 4.8, and ChatGPT 5.6 Sol.
 
-> Client assets are not included. DME requires your own `Tibia.dat`,
-> `Tibia.spr`, and `items.otb` files. These files are copyrighted by CipSoft
-> and must not be committed to this repository or included in a release.
+> Client assets are not included. Standard maps require your own `Tibia.dat`,
+> `Tibia.spr`, and `items.otb` files. BlackTek maps require `Tibia.dat`,
+> `Tibia.spr`, and `items.toml`; the OTB file is not needed in BlackTek mode.
+> These files are copyrighted by CipSoft or supplied by the relevant server
+> project and must not be committed to this repository or included in a release.
 
 ![Dewral Map Editor with an OTBM map open](docs/screenshots/editor-overview.png)
 
@@ -61,7 +63,8 @@ modern GitHub-inspired layout or the textured, Tibia-inspired Classic UI.
    `qml` folders shipped next to it.
 3. Run `DME.exe`.
 4. Select a client version or create a custom profile.
-5. Point the profile at a directory containing:
+5. Point the profile at a directory containing `Tibia.dat` and `Tibia.spr`.
+   For Standard item data, the directory must also contain:
 
    ```text
    Tibia.dat
@@ -69,7 +72,12 @@ modern GitHub-inspired layout or the textured, Tibia-inspired Classic UI.
    items.otb
    ```
 
-6. Open an OTBM map.
+   For BlackTek item data, choose BlackTek in the map open/new dialog and
+   configure an `items.toml` file or a directory containing `items.toml` or
+   `items/items.toml`. BlackTek mode does not require `items.otb`.
+
+6. Open an OTBM map and select the matching item data mode. The choice is
+   remembered per canonical map path.
 
 House and spawn XML sidecar files are optional. When present, DME loads them
 with the map. When absent, the map still opens normally.
@@ -193,6 +201,7 @@ resolution and installs:
 - `qtbase`
 - `qtdeclarative`
 - `qtsvg`
+- `tomlplusplus`
 
 The `qtbase` feature set is limited to the GUI, network, OpenGL, and PNG
 components used by DME. The pinned port set provides Qt 6.10.2.

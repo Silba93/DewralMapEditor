@@ -24,6 +24,7 @@ class DocumentManager : public QObject
     Q_PROPERTY(bool hasDirtyDocuments READ hasDirtyDocuments NOTIFY tabsChanged)
     Q_PROPERTY(QString currentDocumentId READ currentDocumentId NOTIFY currentChanged)
     Q_PROPERTY(QString currentProfileKey READ currentProfileKey NOTIFY documentMetadataChanged)
+    Q_PROPERTY(QString currentItemSource READ currentItemSource NOTIFY documentMetadataChanged)
 
 public:
     explicit DocumentManager(QObject *parent = nullptr);
@@ -38,6 +39,7 @@ public:
     bool hasDirtyDocuments() const;
     QString currentDocumentId() const;
     QString currentProfileKey() const;
+    QString currentItemSource() const;
 
     Q_INVOKABLE OtbmReader *newDocument();
 
@@ -50,6 +52,7 @@ public:
     Q_INVOKABLE bool adoptCurrentRecovery(const QString &recoveryId,
                                           const QString &originalPath);
     Q_INVOKABLE void setCurrentProfileKey(const QString &profileKey);
+    Q_INVOKABLE void setCurrentItemSource(const QString &itemSource);
     void markCleanShutdown();
 
 signals:
@@ -76,6 +79,7 @@ private:
     QHash<OtbmReader *, qint64> m_lastEditMs;
     QHash<OtbmReader *, qint64> m_lastRecoveryMs;
     QHash<OtbmReader *, QString> m_profileKeys;
+    QHash<OtbmReader *, QString> m_itemSources;
     QVariantList m_recoveries;
     QTimer m_autosaveTimer;
     QTimer m_sessionWriteTimer;

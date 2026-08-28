@@ -466,6 +466,7 @@ public:
                                           int specificFloor);
 
     Q_INVOKABLE void rebuildAtlas();
+    Q_INVOKABLE void refreshItemData();
     Q_INVOKABLE void centerOnContent();
 
     Q_INVOKABLE void centerOnTile(int x, int y, int z);
