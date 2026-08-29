@@ -125,7 +125,8 @@ void DocumentManager::hookDocument(OtbmReader *doc)
     connect(doc, &OtbmReader::dirtyChanged, this, &DocumentManager::tabsChanged);
     connect(doc, &OtbmReader::loadedChanged, this, &DocumentManager::tabsChanged);
     connect(doc, &OtbmReader::mapChanged, this, [this, doc] {
-        m_lastEditMs[doc] = QDateTime::currentMSecsSinceEpoch();
+        if (doc->isDirty())
+            m_lastEditMs[doc] = QDateTime::currentMSecsSinceEpoch();
     });
     connect(doc, &OtbmReader::filePathChanged, this, [this] { writeSession(false); });
     connect(doc, &OtbmReader::loadedChanged, this, [this] { writeSession(false); });

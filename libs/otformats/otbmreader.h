@@ -455,6 +455,7 @@ private:
     bool abortLoad(QString message);
     bool loadCancelled() const;
     void setDirty(bool d);
+    void notifyMapChanged();
 
     bool parseRootHeader(BinaryNode &root);
     bool parseMapData(BinaryNode &mapData);

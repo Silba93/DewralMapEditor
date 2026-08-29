@@ -449,8 +449,6 @@ QVariantMap itemToVariant(const OtbmMapItem &item)
 OtbmReader::OtbmReader(QObject *parent)
     : QObject(parent)
 {
-
-    connect(this, &OtbmReader::mapChanged, this, [this] { setDirty(true); });
 }
 
 void OtbmReader::setDirty(bool d)
@@ -458,6 +456,12 @@ void OtbmReader::setDirty(bool d)
     if (m_dirty == d) return;
     m_dirty = d;
     emit dirtyChanged();
+}
+
+void OtbmReader::notifyMapChanged()
+{
+    setDirty(true);
+    emit mapChanged();
 }
 
 OtbmReader::~OtbmReader() = default;
@@ -669,6 +673,8 @@ bool OtbmReader::adoptLoadedState(OtbmReader &source)
 {
     if (!source.m_loaded) return false;
 
+    const bool dirtyBeforeAdoption = m_dirty;
+
     using std::swap;
     swap(m_tiles, source.m_tiles);
     swap(m_posIndex, source.m_posIndex);
@@ -704,7 +710,7 @@ bool OtbmReader::adoptLoadedState(OtbmReader &source)
     m_errorString.clear();
     emit errorChanged();
     emit filePathChanged();
-    emit dirtyChanged();
+    if (dirtyBeforeAdoption != m_dirty) emit dirtyChanged();
     emit mapChanged();
     reportLoadingProgress(78, QStringLiteral("Map data loaded..."));
     emit loadedChanged();
@@ -783,7 +789,7 @@ bool OtbmReader::setMapProperties(const QString &description,
     m_spawnFile = normalizedSpawn;
     m_houseFile = normalizedHouse;
     setError(QString());
-    emit mapChanged();
+    notifyMapChanged();
     return true;
 }
 
@@ -1191,7 +1197,7 @@ bool OtbmReader::addItem(int x, int y, int z, uint16_t serverId)
     }
 
     m_itemCount += 1;
-    emit mapChanged();
+    notifyMapChanged();
     return true;
 }
 
@@ -1240,7 +1246,7 @@ bool OtbmReader::placeItem(int x, int y, int z, const OtbmMapItem &src,
         m_itemCount += nodes;
     }
 
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1321,7 +1327,7 @@ int OtbmReader::replaceItemsById(int x, int y, int z, uint16_t fromId, uint16_t 
 
     recordTile(x, y, z);
     const int n = replaceMatches(tile.items, fromId, toId);
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return n;
 }
 
@@ -1726,7 +1732,7 @@ int OtbmReader::addHouse(int townId)
     h.townId = townId;
     m_houses.push_back(std::move(h));
     m_housesModified = true;
-    emit mapChanged();
+    notifyMapChanged();
     return static_cast<int>(maxId + 1);
 }
 
@@ -1736,7 +1742,7 @@ void OtbmReader::setHouseTownId(int id, int townId)
     if (!h || h->townId == townId) return;
     h->townId = townId;
     m_housesModified = true;
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::removeHouse(int id)
@@ -1752,7 +1758,7 @@ void OtbmReader::removeHouse(int id)
         if (t.is_house && static_cast<int>(t.house_id) == id)
             clearHouseTileAt(t.x, t.y, t.z);
     endUndoGroup();
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::setHouseName(int id, const QString &name)
@@ -1761,7 +1767,7 @@ void OtbmReader::setHouseName(int id, const QString &name)
     if (!h || h->name == name || name.isEmpty()) return;
     h->name = name;
     m_housesModified = true;
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::setHouseRent(int id, int rent)
@@ -1770,7 +1776,7 @@ void OtbmReader::setHouseRent(int id, int rent)
     if (!h || h->rent == rent || rent < 0) return;
     h->rent = rent;
     m_housesModified = true;
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::setHouseEntry(int id, int x, int y, int z)
@@ -1780,7 +1786,7 @@ void OtbmReader::setHouseEntry(int id, int x, int y, int z)
     if (h->entryX == x && h->entryY == y && h->entryZ == z) return;
     h->entryX = x; h->entryY = y; h->entryZ = z;
     m_housesModified = true;
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 bool OtbmReader::setHouseTileAt(int x, int y, int z, uint32_t houseId)
@@ -1793,7 +1799,7 @@ bool OtbmReader::setHouseTileAt(int x, int y, int z, uint32_t houseId)
     t->house_id = houseId;
     t->flags |= static_cast<uint32_t>(OtbmTileFlag::TileProtection);
     if (m_housesXmlLoaded) m_housesModified = true;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1808,7 +1814,7 @@ bool OtbmReader::clearHouseTileAt(int x, int y, int z)
     t.house_id = 0;
     t.flags &= ~static_cast<uint32_t>(OtbmTileFlag::TileProtection);
     if (m_housesXmlLoaded) m_housesModified = true;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1820,7 +1826,7 @@ bool OtbmReader::setSpawnAt(int x, int y, int z, int radius)
     if (t->spawn_radius == radius) return true;
     t->spawn_radius = radius;
     m_spawnsModified = true;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1836,7 +1842,7 @@ bool OtbmReader::setCreatureAt(int x, int y, int z, const QString &name, int spa
     t->creature_spawntime = effectiveSpawnTime;
     t->creature_is_npc = isNpc;
     m_spawnsModified = true;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1849,7 +1855,7 @@ bool OtbmReader::clearSpawnAt(int x, int y, int z)
     recordTile(x, y, z);
     t.spawn_radius = 0;
     m_spawnsModified = true;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1862,7 +1868,7 @@ bool OtbmReader::clearCreatureAt(int x, int y, int z)
     recordTile(x, y, z);
     t.creature_name.clear();
     m_spawnsModified = true;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1882,7 +1888,7 @@ bool OtbmReader::setTopItemCount(int x, int y, int z, uint16_t count)
     }
     recordTile(x, y, z);
     top.count = count;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1899,7 +1905,7 @@ bool OtbmReader::mutateTopItem(int x, int y, int z, Mut mut)
 
     recordTile(x, y, z);
     mut(tile.items.back());
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -1916,7 +1922,7 @@ bool OtbmReader::mutateItemAt(int x, int y, int z, int index, Mut mut)
 
     recordTile(x, y, z);
     mut(tile.items[static_cast<size_t>(index)]);
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2153,7 +2159,7 @@ bool OtbmReader::addContainerChild(int x, int y, int z,
     child.server_id = serverId;
     container->ensureChildren().push_back(std::move(child));
     ++m_itemCount;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2172,7 +2178,7 @@ bool OtbmReader::removeContainerChild(int x, int y, int z,
     auto child = container->children()->begin() + childIndex;
     m_itemCount -= countItems(*child);
     container->children()->erase(child);
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2193,7 +2199,7 @@ bool OtbmReader::moveContainerChild(int x, int y, int z,
     container = itemAtPath(tile, path);
     std::swap((*container->children())[static_cast<size_t>(childIndex)],
               (*container->children())[static_cast<size_t>(target)]);
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2294,7 +2300,7 @@ int OtbmReader::replaceItemsOnMap(uint16_t fromId, uint16_t toId)
         m_lastAffected.push_back({ t.x, t.y, t.z });
     }
     endUndoGroup();
-    if (n > 0) emit mapChanged();
+    if (n > 0) notifyMapChanged();
     return n;
 }
 
@@ -2314,7 +2320,7 @@ int OtbmReader::removeItemsOnMap(uint16_t serverId)
         m_lastAffected.push_back({ t.x, t.y, t.z });
     }
     endUndoGroup();
-    if (n > 0) emit mapChanged();
+    if (n > 0) notifyMapChanged();
     return n;
 }
 
@@ -2337,7 +2343,7 @@ bool OtbmReader::setTileFlags(int x, int y, int z, uint32_t flags)
     }
     recordTile(x, y, z);
     tile.flags = flags;
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2354,7 +2360,7 @@ bool OtbmReader::removeTopItem(int x, int y, int z)
     recordTile(x, y, z);
     m_itemCount -= countItems(tile.items.back());
     tile.items.pop_back();
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2374,7 +2380,7 @@ bool OtbmReader::removeItemAt(int x, int y, int z, int index)
     auto item = tile.items.begin() + index;
     m_itemCount -= countItems(*item);
     tile.items.erase(item);
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2400,7 +2406,7 @@ bool OtbmReader::moveItemAt(int x, int y, int z, int index, int targetIndex)
                     tile.items.begin() + index,
                     tile.items.begin() + index + 1);
     }
-    if (!m_undoGrouping) emit mapChanged();
+    if (!m_undoGrouping) notifyMapChanged();
     return true;
 }
 
@@ -2438,7 +2444,7 @@ int OtbmReader::removeItemsById(int x, int y, int z, const std::vector<uint16_t>
             }
         }
     }
-    if (removed > 0 && !m_undoGrouping) emit mapChanged();
+    if (removed > 0 && !m_undoGrouping) notifyMapChanged();
     return removed;
 }
 
@@ -2597,7 +2603,7 @@ void OtbmReader::endUndoGroup()
         pushUndo(std::move(m_currentGroup));
     }
     m_currentGroup = UndoAction{};
-    if (pushed) emit mapChanged();
+    if (pushed) notifyMapChanged();
 }
 
 void OtbmReader::setUndoLimit(int n)
@@ -2724,7 +2730,7 @@ bool OtbmReader::undo()
     restoreSnapshots(action.tiles);
     for (const TileSnapshot &snap : action.tiles)
         m_lastAffected.push_back({ snap.x, snap.y, snap.z });
-    emit mapChanged();
+    notifyMapChanged();
     return true;
 }
 
@@ -2751,7 +2757,7 @@ bool OtbmReader::redo()
     restoreSnapshots(action.tiles);
     for (const TileSnapshot &snap : action.tiles)
         m_lastAffected.push_back({ snap.x, snap.y, snap.z });
-    emit mapChanged();
+    notifyMapChanged();
     return true;
 }
 
@@ -3116,7 +3122,7 @@ QVariantMap OtbmReader::cleanupMap(const QSet<uint16_t> &validServerIds,
         removedHouses = static_cast<int>(oldSize - m_houses.size());
         if (removedHouses > 0) {
             m_housesModified = true;
-            emit mapChanged();
+            notifyMapChanged();
         }
     }
 
@@ -3175,8 +3181,7 @@ void OtbmReader::adoptRecoveryIdentity(const QString &originalPath,
     }
     m_spawnFile = spawnFile;
     m_houseFile = houseFile;
-    setDirty(true);
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
@@ -3537,7 +3542,7 @@ int OtbmReader::addWaypoint()
     OtbmWaypoint waypoint;
     waypoint.name = name;
     m_waypoints.push_back(std::move(waypoint));
-    emit mapChanged();
+    notifyMapChanged();
     return static_cast<int>(m_waypoints.size()) - 1;
 }
 
@@ -3545,7 +3550,7 @@ void OtbmReader::removeWaypoint(int index)
 {
     if (index < 0 || index >= static_cast<int>(m_waypoints.size())) return;
     m_waypoints.erase(m_waypoints.begin() + index);
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::renameWaypoint(int index, const QString &name)
@@ -3559,7 +3564,7 @@ void OtbmReader::renameWaypoint(int index, const QString &name)
     OtbmWaypoint &waypoint = m_waypoints[static_cast<size_t>(index)];
     if (waypoint.name == trimmed) return;
     waypoint.name = trimmed;
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::setWaypointPosition(int index, int x, int y, int z)
@@ -3571,7 +3576,7 @@ void OtbmReader::setWaypointPosition(int index, int x, int y, int z)
     waypoint.x = static_cast<uint16_t>(x);
     waypoint.y = static_cast<uint16_t>(y);
     waypoint.z = static_cast<uint8_t>(z);
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 int OtbmReader::addTown()
@@ -3582,7 +3587,7 @@ int OtbmReader::addTown()
     town.id = maxId + 1;
     town.name = QStringLiteral("New Town");
     m_towns.push_back(town);
-    emit mapChanged();
+    notifyMapChanged();
     return static_cast<int>(town.id);
 }
 
@@ -3592,7 +3597,7 @@ void OtbmReader::removeTown(int id)
                             [id](const OtbmTown &t) { return static_cast<int>(t.id) == id; });
     if (it == m_towns.end()) return;
     m_towns.erase(it);
-    emit mapChanged();
+    notifyMapChanged();
 }
 
 void OtbmReader::renameTown(int id, const QString &name)
@@ -3600,7 +3605,7 @@ void OtbmReader::renameTown(int id, const QString &name)
     for (OtbmTown &t : m_towns) {
         if (static_cast<int>(t.id) == id) {
             t.name = name;
-            emit mapChanged();
+            notifyMapChanged();
             return;
         }
     }
@@ -3614,7 +3619,7 @@ void OtbmReader::setTownTemple(int id, int x, int y, int z)
             t.temple_x = static_cast<uint16_t>(x);
             t.temple_y = static_cast<uint16_t>(y);
             t.temple_z = static_cast<uint8_t>(z);
-            emit mapChanged();
+            notifyMapChanged();
             return;
         }
     }

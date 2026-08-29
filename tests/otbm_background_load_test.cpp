@@ -38,6 +38,7 @@ int main(int argc, char **argv)
         OtbmReader document;
         document.beginBackgroundLoad();
         if (!document.adoptLoadedState(parsed)) return 1;
+        if (!require(!document.isDirty(), "Adopted document was marked dirty during load")) return 1;
         qInfo().noquote() << "Loaded" << document.tileCount() << "tiles and"
                           << document.itemCount() << "items";
         return 0;
@@ -87,6 +88,7 @@ int main(int argc, char **argv)
     document.beginBackgroundLoad();
     if (!require(document.adoptLoadedState(parsed), "Could not adopt parsed map state")) return 1;
     if (!require(document.isLoaded(), "Adopted document is not loaded")) return 1;
+    if (!require(!document.isDirty(), "Adopted document was marked dirty during load")) return 1;
     if (!require(document.tileCount() == 1, "Adopted tile count differs")) return 1;
     if (!require(document.itemCount() == 2, "Adopted item count differs")) return 1;
     if (!require(document.description() == QStringLiteral("Background load test"),
@@ -94,6 +96,9 @@ int main(int argc, char **argv)
     if (!require(document.filePath() == path, "Adopted path differs")) return 1;
     if (!require(document.tileAt(100, 120, 7) != nullptr,
                  "Adopted position index is invalid")) return 1;
+    if (!require(document.addItem(101, 120, 7, 102),
+                 "Could not edit adopted map")) return 1;
+    if (!require(document.isDirty(), "Editing adopted map did not mark it dirty")) return 1;
 
     document.finishLoading(true);
     return 0;
