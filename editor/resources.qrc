@@ -40,6 +40,7 @@
         <file alias="qml/dialogs/ContainerDialog.qml">qml/dialogs/ContainerDialog.qml</file>
         <file alias="qml/dialogs/CleanupDialog.qml">qml/dialogs/CleanupDialog.qml</file>
         <file alias="qml/dialogs/WaypointsDialog.qml">qml/dialogs/WaypointsDialog.qml</file>
+        <file alias="qml/dialogs/NotesDialog.qml">qml/dialogs/NotesDialog.qml</file>
         <file alias="qml/dialogs/CreatureManagerDialog.qml">qml/dialogs/CreatureManagerDialog.qml</file>
         <file alias="qml/dialogs/ExportMinimapDialog.qml">qml/dialogs/ExportMinimapDialog.qml</file>
         <file alias="qml/dialogs/GoToPositionDialog.qml">qml/dialogs/GoToPositionDialog.qml</file>

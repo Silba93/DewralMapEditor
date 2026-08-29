@@ -24,6 +24,7 @@ DmeMenuBar {
     required property var goToDialog
     required property var townsDialog
     required property var waypointsDialog
+    required property var notesDialog
     required property var creatureManagerDialog
     required property var mapPropertiesDialog
     required property var statsDialog
@@ -270,6 +271,11 @@ DmeMenuBar {
             text: "Edit Waypoints"
             enabled: Backend.otbmReader.loaded
             onTriggered: menuBar.waypointsDialog.open()
+        }
+        Action {
+            text: "Edit Notes"
+            enabled: Backend.otbmReader.loaded
+            onTriggered: menuBar.notesDialog.open()
         }
 
         DmeMenu {

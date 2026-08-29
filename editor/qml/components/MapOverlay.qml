@@ -72,7 +72,7 @@ Item {
         ctx.fillText("W", centerX, centerY + 0.5);
     }
 
-    function drawTooltip(ctx, text, anchorX, anchorY, waypoint) {
+    function drawTooltip(ctx, text, anchorX, anchorY, waypoint, note) {
         if (!text || text.length === 0)
             return;
 
@@ -105,7 +105,7 @@ Item {
         ctx.fillStyle = "rgba(13, 17, 23, 0.96)";
         ctx.fill();
         ctx.lineWidth = 1;
-        ctx.strokeStyle = waypoint ? "#3fb950" : "#59636e";
+        ctx.strokeStyle = waypoint ? "#3fb950" : (note ? "#d29922" : "#59636e");
         ctx.stroke();
 
         for (let line = 0; line < lines.length; ++line) {
@@ -156,7 +156,8 @@ Item {
                         && entry.text.length > 0)
                     overlay.drawTooltip(ctx, entry.text, centerX,
                                         (entry.y - overlay.paintedOriginY) * tileSize + margin,
-                                        entry.kind === "waypoint");
+                                        entry.kind === "waypoint",
+                                        entry.kind === "note");
             }
         }
     }

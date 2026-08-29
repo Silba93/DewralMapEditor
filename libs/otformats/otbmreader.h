@@ -237,6 +237,13 @@ struct OtbmHouse {
     int entryX = 0, entryY = 0, entryZ = 0;
 };
 
+struct OtbmNote {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+    QString text;
+};
+
 class OtbmReader : public QObject
 {
     Q_OBJECT
@@ -261,6 +268,7 @@ class OtbmReader : public QObject
     Q_PROPERTY(int itemCount READ itemCount NOTIFY loadedChanged)
     Q_PROPERTY(int townCount READ townCount NOTIFY loadedChanged)
     Q_PROPERTY(int waypointCount READ waypointCount NOTIFY loadedChanged)
+    Q_PROPERTY(int noteCount READ noteCount NOTIFY mapChanged)
     Q_PROPERTY(int undoCount READ undoCount NOTIFY mapChanged)
     Q_PROPERTY(int redoCount READ redoCount NOTIFY mapChanged)
     Q_PROPERTY(qint64 editOperationCount READ editOperationCount NOTIFY mapChanged)
@@ -298,6 +306,7 @@ public:
     int itemCount() const { return m_itemCount; }
     int townCount() const { return static_cast<int>(m_towns.size()); }
     int waypointCount() const { return static_cast<int>(m_waypoints.size()); }
+    int noteCount() const { return static_cast<int>(m_notes.size()); }
 
     const std::deque<OtbmTile> &tiles() const { return m_tiles; }
 
@@ -307,6 +316,9 @@ public:
 
     Q_INVOKABLE QVariantList townsList() const;
     Q_INVOKABLE QVariantList waypointsList() const;
+    Q_INVOKABLE QVariantList notesList() const;
+    Q_INVOKABLE QString noteText(int x, int y, int z) const;
+    Q_INVOKABLE bool setNote(int x, int y, int z, const QString &text);
     Q_INVOKABLE int addWaypoint();
     Q_INVOKABLE void removeWaypoint(int index);
     Q_INVOKABLE void renameWaypoint(int index, const QString &name);
@@ -450,6 +462,7 @@ signals:
 
 private:
     bool saveFileInternal(const QString &path, bool recoveryMode);
+    bool saveNotesOnly(const QString &path);
     void reset();
     void setError(const QString &message);
     bool abortLoad(QString message);
@@ -483,6 +496,10 @@ private:
     bool loadHousesXml(const QString &mapPath);
     bool buildHousesXml(const QString &mapPath, QString &targetPath, QByteArray &data);
     OtbmHouse *houseById(int id);
+
+    bool loadNotes(const QString &mapPath);
+    bool buildNotesXml(const QString &mapPath, QString &targetPath,
+                       QByteArray &data, bool &removeTarget);
 
     struct TileSnapshot {
         int x, y, z;
@@ -536,6 +553,7 @@ private:
     std::vector<OtbmTown> m_towns;
     std::vector<OtbmWaypoint> m_waypoints;
     std::vector<OtbmHouse> m_houses;
+    std::vector<OtbmNote> m_notes;
 
     uint32_t m_otbmVersion = 0;
     uint16_t m_width = 0;
@@ -550,6 +568,10 @@ private:
     bool m_housesXmlLoaded = false;
     bool m_spawnsModified = false;
     bool m_housesModified = false;
+    bool m_notesLoaded = false;
+    bool m_notesModified = false;
+    bool m_mapDirty = false;
+    bool m_recoveryMode = false;
     int m_itemCount = 0;
 
     bool m_loaded = false;

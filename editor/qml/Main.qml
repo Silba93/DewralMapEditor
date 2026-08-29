@@ -262,6 +262,7 @@ Window {
         goToDialog: gotoPosDialog
         townsDialog: townsDialog
         waypointsDialog: waypointsDialog
+        notesDialog: notesDialog
         creatureManagerDialog: creatureManagerDialog
         mapPropertiesDialog: mapPropsDialog
         statsDialog: statsDialog
@@ -586,6 +587,7 @@ Window {
         settings: prefs
         propertiesDialog: propsDialog
         browseFieldDialog: browseFieldDialog
+        notesDialog: notesDialog
         paletteNavigator: palette
     }
 
@@ -930,6 +932,27 @@ Window {
         sourceComponent: WaypointsDialog {
             mapCtrl: workspace.mapView
             onClosed: Qt.callLater(() => waypointsLoader.active = false)
+        }
+    }
+
+    QtObject {
+        id: notesDialog
+        function open() {
+            notesLoader.active = true;
+            notesLoader.item["refresh"]();
+            notesLoader.item["open"]();
+        }
+        function openAt(x, y, z, text) {
+            notesLoader.active = true;
+            notesLoader.item["openAt"](x, y, z, text);
+        }
+    }
+    Loader {
+        id: notesLoader
+        active: false
+        sourceComponent: NotesDialog {
+            mapCtrl: workspace.mapView
+            onClosed: Qt.callLater(() => notesLoader.active = false)
         }
     }
 

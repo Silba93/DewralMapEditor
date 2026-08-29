@@ -9,6 +9,7 @@ Item {
     required property var settings
     required property var propertiesDialog
     required property var browseFieldDialog
+    required property var notesDialog
     required property var paletteNavigator
     readonly property bool githubUi: Backend.uiTheme.style !== "classic"
     readonly property bool grayUi: Backend.uiTheme.style === "gray-dark"
@@ -135,7 +136,8 @@ Item {
                 teleportZ: 0,
                 canRotate: false,
                 door: false,
-                doorOpen: false
+                doorOpen: false,
+                noteText: ""
             })
 
         MapView {
@@ -288,6 +290,13 @@ Item {
                 text: "Browse Field"
                 enabled: mapArea.ctx.hasItem
                 onTriggered: workspace.browseFieldDialog.open()
+            }
+            Action {
+                text: mapArea.ctx.noteText !== "" ? "Edit Note" : "Add Note"
+                enabled: Backend.otbmReader.loaded
+                onTriggered: workspace.notesDialog.openAt(
+                                 mapArea.ctx.x, mapArea.ctx.y, mapArea.ctx.z,
+                                 mapArea.ctx.noteText)
             }
             Action {
                 text: "Paste"

@@ -460,6 +460,7 @@ void OtbmReader::setDirty(bool d)
 
 void OtbmReader::notifyMapChanged()
 {
+    m_mapDirty = true;
     setDirty(true);
     emit mapChanged();
 }
@@ -482,6 +483,7 @@ void OtbmReader::reset()
     m_towns.clear();
     m_waypoints.clear();
     m_houses.clear();
+    m_notes.clear();
     m_otbmVersion = 0;
     m_width = 0;
     m_height = 0;
@@ -494,6 +496,9 @@ void OtbmReader::reset()
     m_housesXmlLoaded = false;
     m_spawnsModified = false;
     m_housesModified = false;
+    m_notesLoaded = false;
+    m_notesModified = false;
+    m_mapDirty = false;
     m_itemCount = 0;
     m_loaded = false;
     m_errorString.clear();
@@ -622,6 +627,7 @@ bool OtbmReader::loadFile(const QString &path)
     loadSpawnsXml(path);
     reportLoadingProgress(70, QStringLiteral("Loading house data..."));
     loadHousesXml(path);
+    loadNotes(path);
 
     m_loaded = true;
     m_filePath = path;
@@ -690,6 +696,7 @@ bool OtbmReader::adoptLoadedState(OtbmReader &source)
     swap(m_towns, source.m_towns);
     swap(m_waypoints, source.m_waypoints);
     swap(m_houses, source.m_houses);
+    swap(m_notes, source.m_notes);
     swap(m_otbmVersion, source.m_otbmVersion);
     swap(m_width, source.m_width);
     swap(m_height, source.m_height);
@@ -702,6 +709,9 @@ bool OtbmReader::adoptLoadedState(OtbmReader &source)
     swap(m_housesXmlLoaded, source.m_housesXmlLoaded);
     swap(m_spawnsModified, source.m_spawnsModified);
     swap(m_housesModified, source.m_housesModified);
+    swap(m_notesLoaded, source.m_notesLoaded);
+    swap(m_notesModified, source.m_notesModified);
+    swap(m_mapDirty, source.m_mapDirty);
     swap(m_itemCount, source.m_itemCount);
     swap(m_loaded, source.m_loaded);
     swap(m_dirty, source.m_dirty);
@@ -805,6 +815,7 @@ bool OtbmReader::newMap(int width, int height, int clientVersion,
     m_description = QStringLiteral("Created with Dewral Map Editor");
     m_spawnsXmlLoaded = true;
     m_housesXmlLoaded = true;
+    m_notesLoaded = true;
 
     m_loaded = true;
     emit loadedChanged();
@@ -1400,6 +1411,114 @@ bool optionalXmlBool(const QXmlStreamAttributes &attributes, QLatin1StringView n
     return false;
 }
 
+}
+
+bool OtbmReader::loadNotes(const QString &mapPath)
+{
+    m_notes.clear();
+    m_notesLoaded = false;
+    m_notesModified = false;
+
+    const QFileInfo mapInfo(mapPath);
+    const QDir mapDir = mapInfo.dir();
+    QString path = mapDir.filePath(QStringLiteral("notes.xml"));
+    const QString recoveryNotesPath = mapDir.filePath(
+        mapInfo.completeBaseName() + QStringLiteral("-notes.xml"));
+    if (!QFileInfo::exists(path) && QFileInfo::exists(recoveryNotesPath))
+        path = recoveryNotesPath;
+    QFile file(path);
+    if (!file.exists()) {
+        m_notesLoaded = true;
+        return true;
+    }
+    if (!file.open(QIODevice::ReadOnly)) return false;
+
+    QXmlStreamReader xml(&file);
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("notes"))
+        return false;
+
+    const QString version = xml.attributes().value(QLatin1String("version")).toString();
+    if (!version.isEmpty() && version != QLatin1String("1")) return false;
+
+    while (xml.readNextStartElement()) {
+        if (xml.name() != QLatin1String("note")) {
+            xml.skipCurrentElement();
+            continue;
+        }
+
+        const QXmlStreamAttributes attributes = xml.attributes();
+        int x = 0, y = 0, z = 0;
+        const bool validAttributes = requiredXmlInt(attributes, QLatin1String("x"), x)
+            && requiredXmlInt(attributes, QLatin1String("y"), y)
+            && requiredXmlInt(attributes, QLatin1String("z"), z);
+        const QString text = xml.readElementText(QXmlStreamReader::SkipChildElements);
+        if (xml.hasError()) return false;
+        if (!validAttributes || x < 0 || x >= m_width || y < 0 || y >= m_height
+            || z < 0 || z > 15 || text.isEmpty()) {
+            continue;
+        }
+
+        bool replaced = false;
+        for (OtbmNote &note : m_notes) {
+            if (note.x == x && note.y == y && note.z == z) {
+                note.text = text;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) m_notes.push_back({x, y, z, text});
+    }
+
+    if (xml.hasError()) return false;
+    m_notesLoaded = true;
+    return true;
+}
+
+bool OtbmReader::buildNotesXml(const QString &mapPath, QString &targetPath,
+                               QByteArray &data, bool &removeTarget)
+{
+    targetPath.clear();
+    data.clear();
+    removeTarget = false;
+    if (!m_notesLoaded && !m_notesModified) return true;
+
+    const QFileInfo mapInfo(mapPath);
+    const QString fileName = m_recoveryMode
+        ? mapInfo.completeBaseName() + QStringLiteral("-notes.xml")
+        : QStringLiteral("notes.xml");
+    targetPath = mapInfo.dir().filePath(fileName);
+    if (m_notes.empty()) {
+        removeTarget = true;
+        return true;
+    }
+
+    QBuffer buffer(&data);
+    if (!buffer.open(QIODevice::WriteOnly)) {
+        setError(QStringLiteral("Cannot prepare note data"));
+        targetPath.clear();
+        return false;
+    }
+
+    QXmlStreamWriter xml(&buffer);
+    xml.setAutoFormatting(true);
+    xml.writeStartDocument();
+    xml.writeStartElement(QStringLiteral("notes"));
+    xml.writeAttribute(QStringLiteral("version"), QStringLiteral("1"));
+    for (const OtbmNote &note : m_notes) {
+        xml.writeStartElement(QStringLiteral("note"));
+        xml.writeAttribute(QStringLiteral("x"), QString::number(note.x));
+        xml.writeAttribute(QStringLiteral("y"), QString::number(note.y));
+        xml.writeAttribute(QStringLiteral("z"), QString::number(note.z));
+        xml.writeCharacters(note.text);
+        xml.writeEndElement();
+    }
+    xml.writeEndElement();
+    xml.writeEndDocument();
+    if (xml.hasError()) {
+        setError(QStringLiteral("Failed to build note XML: %1").arg(targetPath));
+        return false;
+    }
+    return true;
 }
 
 bool OtbmReader::loadSpawnsXml(const QString &mapPath)
@@ -3135,8 +3254,46 @@ QVariantMap OtbmReader::cleanupMap(const QSet<uint16_t> &validServerIds,
     return result;
 }
 
+bool OtbmReader::saveNotesOnly(const QString &path)
+{
+    if (!m_loaded || path.isEmpty() || m_filePath.isEmpty()
+        || QFileInfo(path).absoluteFilePath().compare(
+               QFileInfo(m_filePath).absoluteFilePath(), Qt::CaseInsensitive) != 0) {
+        return false;
+    }
+
+    QString targetPath;
+    QByteArray data;
+    bool removeTarget = false;
+    if (!buildNotesXml(path, targetPath, data, removeTarget)) return false;
+
+    if (removeTarget) {
+        if (QFileInfo::exists(targetPath) && !QFile::remove(targetPath)) {
+            setError(QStringLiteral("Cannot remove notes file: %1").arg(targetPath));
+            return false;
+        }
+    } else {
+        QSaveFile output(targetPath);
+        if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            || output.write(data) != data.size() || !output.commit()) {
+            setError(QStringLiteral("Cannot save notes file: %1").arg(targetPath));
+            return false;
+        }
+    }
+
+    m_notesLoaded = true;
+    m_notesModified = false;
+    setDirty(m_mapDirty);
+    return true;
+}
+
 bool OtbmReader::saveFile(const QString &path)
 {
+    if (!m_mapDirty && m_notesModified
+        && QFileInfo(path).absoluteFilePath().compare(
+               QFileInfo(m_filePath).absoluteFilePath(), Qt::CaseInsensitive) == 0) {
+        return saveNotesOnly(path);
+    }
     return saveFileInternal(path, false);
 }
 
@@ -3151,12 +3308,14 @@ bool OtbmReader::saveRecoveryFile(const QString &path)
     const bool oldHousesLoaded = m_housesXmlLoaded;
     const bool oldSpawnsModified = m_spawnsModified;
     const bool oldHousesModified = m_housesModified;
+    const bool oldRecoveryMode = m_recoveryMode;
 
     const QString base = QFileInfo(path).completeBaseName();
     m_spawnFile = base + QStringLiteral(".spawn.xml");
     m_houseFile = base + QStringLiteral(".house.xml");
     m_spawnsXmlLoaded = true;
     m_housesXmlLoaded = true;
+    m_recoveryMode = true;
     const bool result = saveFileInternal(path, true);
 
     m_filePath = oldFilePath;
@@ -3168,6 +3327,7 @@ bool OtbmReader::saveRecoveryFile(const QString &path)
     m_housesXmlLoaded = oldHousesLoaded;
     m_spawnsModified = oldSpawnsModified;
     m_housesModified = oldHousesModified;
+    m_recoveryMode = oldRecoveryMode;
     return result;
 }
 
@@ -3202,10 +3362,14 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
 
     QString spawnTarget;
     QString houseTarget;
+    QString notesTarget;
     QByteArray spawnData;
     QByteArray houseData;
+    QByteArray notesData;
+    bool removeNotesTarget = false;
     if (!buildSpawnsXml(path, spawnTarget, spawnData)
-        || !buildHousesXml(path, houseTarget, houseData)) {
+        || !buildHousesXml(path, houseTarget, houseData)
+        || !buildNotesXml(path, notesTarget, notesData, removeNotesTarget)) {
         const QString error = m_errorString;
         restoreDocumentMetadata();
         setError(error);
@@ -3216,10 +3380,11 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
         return QFileInfo(a).absoluteFilePath().compare(QFileInfo(b).absoluteFilePath(),
                                                        Qt::CaseInsensitive) == 0;
     };
-    if (sameTarget(spawnTarget, houseTarget) || sameTarget(spawnTarget, path)
-        || sameTarget(houseTarget, path)) {
+    if (sameTarget(spawnTarget, houseTarget) || sameTarget(spawnTarget, notesTarget)
+        || sameTarget(houseTarget, notesTarget) || sameTarget(spawnTarget, path)
+        || sameTarget(houseTarget, path) || sameTarget(notesTarget, path)) {
         restoreDocumentMetadata();
-        setError(QStringLiteral("The OTBM, spawn, and house files must use different paths"));
+        setError(QStringLiteral("The OTBM, spawn, house, and notes files must use different paths"));
         return false;
     }
 
@@ -3331,6 +3496,7 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
     };
     ExternalBackup spawnBackup;
     ExternalBackup houseBackup;
+    ExternalBackup notesBackup;
 
     auto captureBackup = [this](const QString &target, ExternalBackup &backup,
                                 const QString &label) {
@@ -3354,7 +3520,8 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
     };
 
     if (!captureBackup(spawnTarget, spawnBackup, QStringLiteral("spawn file"))
-        || !captureBackup(houseTarget, houseBackup, QStringLiteral("house file"))) {
+        || !captureBackup(houseTarget, houseBackup, QStringLiteral("house file"))
+        || !captureBackup(notesTarget, notesBackup, QStringLiteral("notes file"))) {
         const QString error = m_errorString;
         restoreDocumentMetadata();
         setError(error);
@@ -3363,6 +3530,7 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
 
     QSaveFile spawnOutput(spawnTarget);
     QSaveFile houseOutput(houseTarget);
+    QSaveFile notesOutput(notesTarget);
     auto stage = [this](QSaveFile &output, const QString &target,
                         const QByteArray &data, const QString &label) {
         if (target.isEmpty()) return true;
@@ -3376,7 +3544,9 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
     };
 
     if (!stage(spawnOutput, spawnTarget, spawnData, QStringLiteral("spawn file"))
-        || !stage(houseOutput, houseTarget, houseData, QStringLiteral("house file"))) {
+        || !stage(houseOutput, houseTarget, houseData, QStringLiteral("house file"))
+        || (!removeNotesTarget && !stage(notesOutput, notesTarget, notesData,
+                                          QStringLiteral("notes file")))) {
         const QString error = m_errorString;
         restoreDocumentMetadata();
         setError(error);
@@ -3417,7 +3587,8 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
     if (!recoveryMode
         && (!createPersistentBackup(path, QStringLiteral("map"))
             || !createPersistentBackup(spawnTarget, QStringLiteral("spawn file"))
-            || !createPersistentBackup(houseTarget, QStringLiteral("house file")))) {
+            || !createPersistentBackup(houseTarget, QStringLiteral("house file"))
+            || !createPersistentBackup(notesTarget, QStringLiteral("notes file")))) {
         const QString error = m_errorString;
         restoreDocumentMetadata();
         setError(error);
@@ -3434,8 +3605,11 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
             && output.commit();
     };
     auto rollback = [&](bool spawnCommitted, bool houseCommitted,
+                        bool notesCommitted, bool notesRemoved,
                         const QString &originalError) {
         bool restored = true;
+        if (notesRemoved || notesCommitted)
+            restored = restoreBackup(notesBackup) && restored;
         if (houseCommitted) restored = restoreBackup(houseBackup) && restored;
         if (spawnCommitted) restored = restoreBackup(spawnBackup) && restored;
         restoreDocumentMetadata();
@@ -3447,20 +3621,37 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
 
     bool spawnCommitted = false;
     bool houseCommitted = false;
+    bool notesCommitted = false;
+    bool notesRemoved = false;
     if (!spawnTarget.isEmpty()) {
         if (!spawnOutput.commit())
-            return rollback(false, false,
+            return rollback(false, false, false, false,
                             QStringLiteral("Failed to commit spawn file: %1").arg(spawnTarget));
         spawnCommitted = true;
     }
     if (!houseTarget.isEmpty()) {
         if (!houseOutput.commit())
-            return rollback(spawnCommitted, false,
+            return rollback(spawnCommitted, false, false, false,
                             QStringLiteral("Failed to commit house file: %1").arg(houseTarget));
         houseCommitted = true;
     }
+    if (!notesTarget.isEmpty()) {
+        if (removeNotesTarget) {
+            if (QFileInfo::exists(notesTarget) && !QFile::remove(notesTarget))
+                return rollback(spawnCommitted, houseCommitted, false, false,
+                                QStringLiteral("Failed to remove notes file: %1")
+                                    .arg(notesTarget));
+            notesRemoved = true;
+        } else {
+            if (!notesOutput.commit())
+                return rollback(spawnCommitted, houseCommitted, false, false,
+                                QStringLiteral("Failed to commit notes file: %1")
+                                    .arg(notesTarget));
+            notesCommitted = true;
+        }
+    }
     if (!mapOutput.commit())
-        return rollback(spawnCommitted, houseCommitted,
+        return rollback(spawnCommitted, houseCommitted, notesCommitted, notesRemoved,
                         QStringLiteral("Failed to commit map file: %1").arg(path));
 
     if (!recoveryMode && (!spawnTarget.isEmpty() || m_spawnFile.isEmpty())) {
@@ -3476,7 +3667,12 @@ bool OtbmReader::saveFileInternal(const QString &path, bool recoveryMode)
         m_filePath = path;
         emit filePathChanged();
     }
-    if (!recoveryMode) setDirty(false);
+    if (!recoveryMode) {
+        m_mapDirty = false;
+        m_notesModified = false;
+        m_notesLoaded = true;
+        setDirty(false);
+    }
     return true;
 }
 
@@ -3528,6 +3724,60 @@ QVariantList OtbmReader::waypointsList() const
         out.append(m);
     }
     return out;
+}
+
+QVariantList OtbmReader::notesList() const
+{
+    QVariantList out;
+    for (const OtbmNote &note : m_notes) {
+        QVariantMap m;
+        m.insert(QStringLiteral("x"), note.x);
+        m.insert(QStringLiteral("y"), note.y);
+        m.insert(QStringLiteral("z"), note.z);
+        m.insert(QStringLiteral("text"), note.text);
+        out.append(m);
+    }
+    return out;
+}
+
+QString OtbmReader::noteText(int x, int y, int z) const
+{
+    for (const OtbmNote &note : m_notes) {
+        if (note.x == x && note.y == y && note.z == z)
+            return note.text;
+    }
+    return QString();
+}
+
+bool OtbmReader::setNote(int x, int y, int z, const QString &text)
+{
+    if (!m_loaded || x < 0 || y < 0 || z < 0 || z > 15
+        || x >= m_width || y >= m_height) {
+        return false;
+    }
+
+    const QString normalized = QString(text).replace(QStringLiteral("\r\n"),
+                                                       QStringLiteral("\n"));
+    for (auto it = m_notes.begin(); it != m_notes.end(); ++it) {
+        if (it->x != x || it->y != y || it->z != z) continue;
+        if (normalized.isEmpty()) {
+            m_notes.erase(it);
+        } else {
+            if (it->text == normalized) return true;
+            it->text = normalized;
+        }
+        m_notesModified = true;
+        setDirty(true);
+        emit mapChanged();
+        return true;
+    }
+
+    if (normalized.isEmpty()) return false;
+    m_notes.push_back({x, y, z, normalized});
+    m_notesModified = true;
+    setDirty(true);
+    emit mapChanged();
+    return true;
 }
 
 int OtbmReader::addWaypoint()

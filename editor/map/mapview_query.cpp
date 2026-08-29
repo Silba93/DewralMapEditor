@@ -556,6 +556,28 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
 
     std::lock_guard<std::recursive_mutex> lock(m_dataMutex);
 
+    if (includeTooltips) {
+        const QVariantList notes = m_otbm->notesList();
+        for (const QVariant &value : notes) {
+            const QVariantMap note = value.toMap();
+            const int x = note.value(QStringLiteral("x")).toInt();
+            const int y = note.value(QStringLiteral("y")).toInt();
+            const int z = note.value(QStringLiteral("z")).toInt();
+            if (z != m_navigationController.floor() || x < minX || x > maxX
+                || y < minY || y > maxY) {
+                continue;
+            }
+            QVariantMap entry;
+            entry.insert(QStringLiteral("kind"), QStringLiteral("note"));
+            entry.insert(QStringLiteral("x"), x);
+            entry.insert(QStringLiteral("y"), y);
+            entry.insert(QStringLiteral("name"), QString());
+            entry.insert(QStringLiteral("text"), note.value(QStringLiteral("text")));
+            output.append(entry);
+            if (output.size() >= kOverlayLimit) return output;
+        }
+    }
+
     for (const OtbmWaypoint &waypoint : m_otbm->waypoints()) {
         if (waypoint.z != m_navigationController.floor() || waypoint.x < minX || waypoint.x > maxX
             || waypoint.y < minY || waypoint.y > maxY) {

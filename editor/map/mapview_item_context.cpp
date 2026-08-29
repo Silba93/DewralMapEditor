@@ -248,6 +248,11 @@ QVariantMap MapView::contextInfo() const
     m.insert(QStringLiteral("spawnCreatureSpawntimeMixed"),
              spawnCreatureSpawntimeMixed);
     m.insert(QStringLiteral("houseId"), tile ? static_cast<int>(tile->house_id) : 0);
+    m.insert(QStringLiteral("noteText"),
+             m_otbm ? m_otbm->noteText(m_itemController.contextX(),
+                                       m_itemController.contextY(),
+                                       m_navigationController.floor())
+                    : QString());
     return m;
 }
 

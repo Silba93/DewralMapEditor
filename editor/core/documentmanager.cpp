@@ -180,6 +180,7 @@ void DocumentManager::removeRecoveryFiles(const QString &id)
     QFile::remove(path);
     QFile::remove(dir.filePath(base + QStringLiteral(".spawn.xml")));
     QFile::remove(dir.filePath(base + QStringLiteral(".house.xml")));
+    QFile::remove(dir.filePath(base + QStringLiteral("-notes.xml")));
 }
 
 void DocumentManager::loadPreviousSession()
