@@ -117,6 +117,14 @@ DmeDialog {
                 title: "Editor"
                 description: "Undo history and map recovery."
                 PrefCard {
+                    title: "Navigation"
+                    DmeCheckBox {
+                        text: "Reverse Ctrl+scroll floor direction"
+                        checked: dialog.settings.reverseCtrlScroll
+                        onClicked: dialog.settings.reverseCtrlScroll = !dialog.settings.reverseCtrlScroll
+                    }
+                }
+                PrefCard {
                     title: "History"
                     PrefRow {
                         label: "Maximum undo steps"

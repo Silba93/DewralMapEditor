@@ -146,6 +146,7 @@ Item {
             otb: Backend.otbReader
             dat: Backend.datReader
             spr: Backend.sprReader
+            reverseCtrlScroll: workspace.settings.reverseCtrlScroll
             floor: 7
             Component.onCompleted: {
                 setBrushStore(Backend.brushStore);

@@ -45,6 +45,7 @@ class MapView : public QQuickItem
     Q_PROPERTY(DatReader *dat READ dat WRITE setDat NOTIFY readersChanged)
     Q_PROPERTY(SprReader *spr READ spr WRITE setSpr NOTIFY readersChanged)
     Q_PROPERTY(int floor READ floor WRITE setFloor NOTIFY floorChanged)
+    Q_PROPERTY(bool reverseCtrlScroll READ reverseCtrlScroll WRITE setReverseCtrlScroll NOTIFY reverseCtrlScrollChanged)
     Q_PROPERTY(int tileSize READ tileSize WRITE setTileSize NOTIFY tileSizeChanged)
     Q_PROPERTY(int spriteCount READ spriteCount NOTIFY atlasChanged)
     Q_PROPERTY(bool atlasBuilding READ atlasBuilding NOTIFY atlasBuildingChanged)
@@ -120,6 +121,12 @@ public:
     DatReader *dat() const { return m_dat; }
     SprReader *spr() const { return m_spr; }
     int floor() const { return m_navigationController.floor(); }
+    bool reverseCtrlScroll() const { return m_reverseCtrlScroll; }
+    void setReverseCtrlScroll(bool reverse) {
+        if (m_reverseCtrlScroll == reverse) return;
+        m_reverseCtrlScroll = reverse;
+        emit reverseCtrlScrollChanged();
+    }
     int tileSize() const { return m_navigationController.tileSize(); }
     int spriteCount() const { return m_atlasService.spriteCount(); }
     bool atlasBuilding() const { return m_atlasBuilding; }
@@ -594,6 +601,7 @@ public:
 signals:
     void readersChanged();
     void floorChanged();
+    void reverseCtrlScrollChanged();
     void tileSizeChanged();
     void atlasChanged();
     void atlasBuildingChanged();
@@ -899,6 +907,7 @@ private:
 
     bool m_showLowerFloors = true;
     bool m_showShade = true;
+    bool m_reverseCtrlScroll = false;
     std::atomic<quint64> m_mapLoadGeneration{0};
     std::shared_ptr<std::atomic_bool> m_mapLoadCancel;
     bool m_asyncFloorIndexReady = false;
