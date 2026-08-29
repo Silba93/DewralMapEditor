@@ -8,6 +8,8 @@ Settings {
     property string mapProfilesJson: "{}"
     property string mapViewPositionsJson: "{}"
     property bool reverseCtrlScroll: false
+    property int panSpeed: 32
+    property bool shiftPanToggle: true
     property bool showAnimations: false
     property bool torchOn: false
     property int lightAmbient: 40

@@ -521,6 +521,16 @@ void MapView::keyPressEvent(QKeyEvent *event)
             return;
         }
     }
+
+    if (m_shiftPanToggle && event->key() == Qt::Key_Shift) {
+        if (!event->isAutoRepeat()) {
+            m_shiftPanBoost = !m_shiftPanBoost;
+            emit contentUpdated();
+        }
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal) {
         setFloor(m_navigationController.floor() - 1);
         event->accept();
@@ -624,6 +634,11 @@ void MapView::keyPressEvent(QKeyEvent *event)
 
 void MapView::keyReleaseEvent(QKeyEvent *event)
 {
+    if (m_shiftPanToggle && event->key() == Qt::Key_Shift) {
+        event->accept();
+        return;
+    }
+
     const int k = event->key();
     if (!event->isAutoRepeat() && m_navigationController.heldArrows().remove(k)) {
         if (m_navigationController.heldArrows().isEmpty()) {
@@ -651,6 +666,7 @@ void MapView::focusOutEvent(QFocusEvent *event)
 
     m_navigationController.heldArrows().clear();
     m_pointerMovePending = false;
+    m_shiftPanBoost = false;
     QQuickItem::focusOutEvent(event);
 }
 
@@ -667,8 +683,14 @@ bool MapView::advanceNavigationFrame()
                  - static_cast<int>(m_navigationController.heldArrows().contains(Qt::Key_Up));
     if (dt <= 0.0 || (dx == 0 && dy == 0)) return false;
 
-    const bool fast = QGuiApplication::keyboardModifiers() & Qt::ShiftModifier;
-    const double distance = (fast ? 60.0 : 25.0) * dt;
+    const bool fast = m_shiftPanToggle
+                    ? m_shiftPanBoost
+                    : (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
+    // Keep keyboard panning at a similar screen-space speed across zoom
+    // levels: zooming out needs more map-tile movement, while zooming in
+    // needs less. The configured speed is the 100% zoom speed.
+    const double zoomScale = 32.0 / std::max(1, m_navigationController.tileSize());
+    const double distance = m_panSpeed * zoomScale * (fast ? 2.4 : 1.0) * dt;
     m_navigationController.originX() += dx * distance;
     m_navigationController.originY() += dy * distance;
 

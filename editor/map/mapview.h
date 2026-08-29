@@ -46,6 +46,8 @@ class MapView : public QQuickItem
     Q_PROPERTY(SprReader *spr READ spr WRITE setSpr NOTIFY readersChanged)
     Q_PROPERTY(int floor READ floor WRITE setFloor NOTIFY floorChanged)
     Q_PROPERTY(bool reverseCtrlScroll READ reverseCtrlScroll WRITE setReverseCtrlScroll NOTIFY reverseCtrlScrollChanged)
+    Q_PROPERTY(int panSpeed READ panSpeed WRITE setPanSpeed NOTIFY panSpeedChanged)
+    Q_PROPERTY(bool shiftPanToggle READ shiftPanToggle WRITE setShiftPanToggle NOTIFY shiftPanToggleChanged)
     Q_PROPERTY(int tileSize READ tileSize WRITE setTileSize NOTIFY tileSizeChanged)
     Q_PROPERTY(int spriteCount READ spriteCount NOTIFY atlasChanged)
     Q_PROPERTY(bool atlasBuilding READ atlasBuilding NOTIFY atlasBuildingChanged)
@@ -126,6 +128,21 @@ public:
         if (m_reverseCtrlScroll == reverse) return;
         m_reverseCtrlScroll = reverse;
         emit reverseCtrlScrollChanged();
+    }
+    int panSpeed() const { return m_panSpeed; }
+    void setPanSpeed(int speed) {
+        speed = std::clamp(speed, 1, 200);
+        if (m_panSpeed == speed) return;
+        m_panSpeed = speed;
+        emit panSpeedChanged();
+    }
+    bool shiftPanToggle() const { return m_shiftPanToggle; }
+    void setShiftPanToggle(bool toggle) {
+        if (m_shiftPanToggle == toggle) return;
+        m_shiftPanToggle = toggle;
+        if (!m_shiftPanToggle) m_shiftPanBoost = false;
+        emit shiftPanToggleChanged();
+        emit contentUpdated();
     }
     int tileSize() const { return m_navigationController.tileSize(); }
     int spriteCount() const { return m_atlasService.spriteCount(); }
@@ -602,6 +619,8 @@ signals:
     void readersChanged();
     void floorChanged();
     void reverseCtrlScrollChanged();
+    void panSpeedChanged();
+    void shiftPanToggleChanged();
     void tileSizeChanged();
     void atlasChanged();
     void atlasBuildingChanged();
@@ -908,6 +927,9 @@ private:
     bool m_showLowerFloors = true;
     bool m_showShade = true;
     bool m_reverseCtrlScroll = false;
+    int m_panSpeed = 32;
+    bool m_shiftPanToggle = true;
+    bool m_shiftPanBoost = false;
     std::atomic<quint64> m_mapLoadGeneration{0};
     std::shared_ptr<std::atomic_bool> m_mapLoadCancel;
     bool m_asyncFloorIndexReady = false;

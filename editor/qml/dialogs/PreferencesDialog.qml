@@ -123,6 +123,25 @@ DmeDialog {
                         checked: dialog.settings.reverseCtrlScroll
                         onClicked: dialog.settings.reverseCtrlScroll = !dialog.settings.reverseCtrlScroll
                     }
+                    PrefRow {
+                        label: "Fast pan Shift behavior"
+                        DmeComboBox {
+                            width: 190
+                            model: ["Hold Shift", "Toggle Shift"]
+                            currentIndex: dialog.settings.shiftPanToggle ? 1 : 0
+                            onActivated: dialog.settings.shiftPanToggle = currentIndex === 1
+                        }
+                    }
+                    PrefRow {
+                        label: "Camera pan speed"
+                        DmeComboBox {
+                            width: 190
+                            model: ["Slow", "Default", "Fast", "Very fast"]
+                            property var values: [16, 32, 50, 80]
+                            currentIndex: Math.max(0, values.indexOf(dialog.settings.panSpeed))
+                            onActivated: dialog.settings.panSpeed = values[currentIndex]
+                        }
+                    }
                 }
                 PrefCard {
                     title: "History"

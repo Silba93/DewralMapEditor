@@ -147,6 +147,8 @@ Item {
             dat: Backend.datReader
             spr: Backend.sprReader
             reverseCtrlScroll: workspace.settings.reverseCtrlScroll
+            panSpeed: workspace.settings.panSpeed
+            shiftPanToggle: workspace.settings.shiftPanToggle
             showAnimations: workspace.settings.showAnimations
             torchOn: workspace.settings.torchOn
             lightAmbient: workspace.settings.lightAmbient
