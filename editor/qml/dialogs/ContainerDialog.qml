@@ -84,7 +84,20 @@ DmeDialog {
         refresh();
     }
 
+    function addItem(serverId) {
+        if (dialog.mapCtrl.addContextContainerItem(dialog.currentPath, serverId))
+            dialog.refresh();
+    }
+
     onOpened: refresh()
+
+    ItemPickerDialog {
+        id: itemPicker
+
+        onItemSelected: function(serverId) {
+            dialog.addItem(serverId);
+        }
+    }
 
     contentItem: Column {
         spacing: 10
@@ -186,7 +199,11 @@ DmeDialog {
                         hoverEnabled: true
                         onClicked: dialog.selectRow(itemRow.index)
                         onDoubleClicked: {
-                            if (dialog.propertiesDialog)
+                            dialog.selectRow(itemRow.index);
+                            if (itemRow.modelData.groupName === "Container"
+                                    || itemRow.modelData.childCount > 0)
+                                dialog.openSelectedContainer();
+                            else if (dialog.propertiesDialog)
                                 dialog.propertiesDialog.openWithContext(
                                     itemRow.modelData, itemRow.modelData.path);
                         }
@@ -209,32 +226,14 @@ DmeDialog {
             spacing: 6
 
             Text {
-                text: "Server ID"
+                text: "Add item"
                 color: "#999"
                 anchors.verticalCenter: parent.verticalCenter
             }
-            DmeSpinBox {
-                id: newItemId
-                width: 120
-                from: 1
-                to: 65535
-            }
-            Text {
-                width: 190
-                text: Backend.otbReader.nameForServerId(newItemId.value)
-                color: "#7f9f7f"
-                font.pixelSize: 10
-                anchors.verticalCenter: parent.verticalCenter
-                elide: Text.ElideRight
-            }
             DmeButton {
-                text: "Add Item"
-                width: 90
-                onClicked: {
-                    if (dialog.mapCtrl.addContextContainerItem(
-                                dialog.currentPath, newItemId.value))
-                        dialog.refresh();
-                }
+                text: "Search Items..."
+                width: 130
+                onClicked: itemPicker.openFor(0)
             }
         }
 

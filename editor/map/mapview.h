@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QSet>
 #include <QImage>
+#include <QPoint>
 #include <QPointF>
 #include <QRect>
 #include <QElapsedTimer>
@@ -660,6 +661,7 @@ signals:
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;

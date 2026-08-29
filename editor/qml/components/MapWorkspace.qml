@@ -179,7 +179,7 @@ Item {
                 mapArea.ctx = mapView.contextInfo();
                 if (mapArea.ctx.hasItem || mapArea.ctx.creatureName !== ""
                         || mapArea.ctx.spawnRadius > 0)
-                    workspace.propertiesDialog.open();
+                    workspace.propertiesDialog.openWithContext(mapArea.ctx);
             }
         }
 
