@@ -10,14 +10,14 @@ Set-StrictMode -Version Latest
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "..")
 )
-$vcpkgRoot = if ([string]::IsNullOrWhiteSpace($env:DME_VCPKG_ROOT)) {
-    Join-Path $repositoryRoot ".tools\vcpkg"
-} else {
+$vcpkgRoot = if (-not [string]::IsNullOrWhiteSpace($env:DME_VCPKG_ROOT)) {
     [System.IO.Path]::GetFullPath($env:DME_VCPKG_ROOT)
+} elseif (-not [string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
+    [System.IO.Path]::GetFullPath($env:VCPKG_ROOT)
+} else {
+    throw "VCPKG_ROOT is not set. Set it to your existing vcpkg installation, for example: `$env:VCPKG_ROOT = 'C:\vcpkg'"
 }
 $vcpkgExecutable = Join-Path $vcpkgRoot "vcpkg.exe"
-$vcpkgTag = "2026.03.18"
-$vcpkgBaseline = "c3867e714dd3a51c272826eea77267876517ed99"
 $releaseArchive = Join-Path $repositoryRoot "release\DewralMapEditor-windows-x64.zip"
 $sourceArchive = Join-Path $repositoryRoot "release\DewralMapEditor-source.zip"
 
@@ -38,10 +38,43 @@ function Require-Command {
 Write-Host "Dewral Map Editor - Windows release build" -ForegroundColor Cyan
 Write-Host "Repository: $repositoryRoot"
 
-Require-Command "git.exe" "Install Git for Windows and reopen this terminal."
 Require-Command "cmake.exe" "Install CMake 3.24 or newer and reopen this terminal."
 
-$cmakeVersionText = (& cmake.exe --version | Select-Object -First 1)
+$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+if (-not (Test-Path -LiteralPath $vswhere)) {
+    throw "Visual Studio was not found. Install the Desktop development with C++ workload."
+}
+
+$visualStudioPath = (& $vswhere -latest -products * `
+    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+    -property installationPath | Select-Object -First 1)
+
+# Some VS2026 Insiders installations are not reported by the older vswhere
+# shipped on the machine. Fall back to the installed x64 toolchain script.
+if (-not $visualStudioPath) {
+    $visualStudioRoot = Join-Path ${env:ProgramFiles} "Microsoft Visual Studio"
+    $vcVarsFile = Get-ChildItem -LiteralPath $visualStudioRoot `
+        -Filter "vcvars64.bat" -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($vcVarsFile) {
+        $visualStudioPath = $vcVarsFile.Directory.Parent.Parent.Parent.FullName
+    }
+}
+if (-not $visualStudioPath) {
+    throw "The Visual Studio C++ toolchain was not found. Install the Desktop development with C++ workload."
+}
+$visualStudioPath = ([string]$visualStudioPath).Trim()
+Write-Host "MSVC: $visualStudioPath"
+
+$cmakeExecutable = (Get-Command cmake.exe).Source
+$bundledCmake = Join-Path $visualStudioPath `
+    "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+if (Test-Path -LiteralPath $bundledCmake) {
+    $cmakeExecutable = $bundledCmake
+}
+Write-Host "CMake: $cmakeExecutable"
+
+$cmakeVersionText = (& $cmakeExecutable --version | Select-Object -First 1)
 if ($cmakeVersionText -notmatch "cmake version (\d+)\.(\d+)") {
     throw "The installed CMake version could not be detected."
 }
@@ -50,59 +83,20 @@ if ([int]$Matches[1] -lt 3 -or
     throw "CMake 3.24 or newer is required. Found: $cmakeVersionText"
 }
 
-$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path -LiteralPath $vswhere)) {
-    throw "Visual Studio 2022 or Build Tools 2022 was not found. Install the Desktop development with C++ workload."
+$configurePreset = "windows-vcpkg"
+$buildPreset = "windows-release"
+$manifestLog = Join-Path $repositoryRoot "build\vcpkg-windows\vcpkg-manifest-install.log"
+if ($visualStudioPath -match "[\\/]18[\\/]") {
+    $configurePreset = "windows-vs2026-vcpkg"
+    $buildPreset = "windows-vs2026-release"
+    $manifestLog = Join-Path $repositoryRoot "build\vcpkg-windows-vs2026\vcpkg-manifest-install.log"
 }
 
-$visualStudioPath = (& $vswhere -latest -products * `
-    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-    -property installationPath)
-if (-not $visualStudioPath) {
-    throw "The Visual Studio C++ toolchain was not found. Install the Desktop development with C++ workload."
+if (-not (Test-Path -LiteralPath $vcpkgExecutable)) {
+    throw "vcpkg.exe was not found under $vcpkgRoot. Set VCPKG_ROOT to an existing vcpkg installation."
 }
-Write-Host "MSVC: $visualStudioPath"
-
-if ((Test-Path -LiteralPath $vcpkgRoot) -and
-    -not (Test-Path -LiteralPath (Join-Path $vcpkgRoot ".git"))) {
-    throw "$vcpkgRoot exists but is not a valid vcpkg checkout. Remove that directory and run the build again."
-}
-
-if (-not (Test-Path -LiteralPath (Join-Path $vcpkgRoot ".git"))) {
-    New-Item -ItemType Directory -Force -Path (Split-Path $vcpkgRoot) | Out-Null
-    Write-Host "Downloading vcpkg $vcpkgTag..."
-    & git.exe clone --branch $vcpkgTag --depth 1 `
-        https://github.com/microsoft/vcpkg.git $vcpkgRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "Cloning vcpkg failed with exit code $LASTEXITCODE."
-    }
-}
-
-$currentVcpkgCommit = (& git.exe -C $vcpkgRoot rev-parse HEAD)
-if ($LASTEXITCODE -ne 0) {
-    throw "Reading the vcpkg revision failed with exit code $LASTEXITCODE."
-}
-$currentVcpkgCommit = $currentVcpkgCommit.Trim()
-$vcpkgChanged = $false
-if ($currentVcpkgCommit -ne $vcpkgBaseline) {
-    Write-Host "Switching vcpkg to the pinned $vcpkgTag baseline..."
-    & git.exe -C $vcpkgRoot fetch origin tag $vcpkgTag --depth 1 --force
-    if ($LASTEXITCODE -ne 0) {
-        throw "Updating the vcpkg checkout failed with exit code $LASTEXITCODE."
-    }
-    & git.exe -C $vcpkgRoot checkout --detach $vcpkgBaseline
-    if ($LASTEXITCODE -ne 0) {
-        throw "Checking out the pinned vcpkg baseline failed with exit code $LASTEXITCODE."
-    }
-    $vcpkgChanged = $true
-}
-
-if ($vcpkgChanged -or -not (Test-Path -LiteralPath $vcpkgExecutable)) {
-    Write-Host "Bootstrapping vcpkg..."
-    & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
-    if ($LASTEXITCODE -ne 0) {
-        throw "Bootstrapping vcpkg failed with exit code $LASTEXITCODE."
-    }
+if (-not (Test-Path -LiteralPath (Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"))) {
+    throw "The vcpkg toolchain was not found under $vcpkgRoot. Set VCPKG_ROOT to an existing vcpkg installation."
 }
 
 $binaryCache = Join-Path $repositoryRoot ".cache\vcpkg"
@@ -117,10 +111,8 @@ if (-not $env:VCPKG_BINARY_SOURCES) {
 Push-Location $repositoryRoot
 try {
     Write-Host "Configuring the project and installing dependencies..."
-    & cmake.exe --preset windows-vcpkg "-DDME_BUILD_CHANNEL=$BuildChannel"
+    & $cmakeExecutable --preset $configurePreset "-DDME_BUILD_CHANNEL=$BuildChannel"
     if ($LASTEXITCODE -ne 0) {
-        $manifestLog = Join-Path $repositoryRoot `
-            "build\vcpkg-windows\vcpkg-manifest-install.log"
         if (Test-Path -LiteralPath $manifestLog) {
             Write-Host ""
             Write-Host "Last vcpkg messages:" -ForegroundColor Yellow
@@ -131,7 +123,7 @@ try {
     }
 
     Write-Host "Building and packaging the Release configuration..."
-    & cmake.exe --build --preset windows-release
+    & $cmakeExecutable --build --preset $buildPreset
     if ($LASTEXITCODE -ne 0) {
         throw "The release build failed with exit code $LASTEXITCODE."
     }

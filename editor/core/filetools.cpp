@@ -46,10 +46,10 @@ QString FileTools::findToml(const QString &path) const
 
     const QDir dir(input.absoluteFilePath());
     const QString direct = dir.filePath(QStringLiteral("items.toml"));
-    if (QFileInfo::isFile(direct)) return QFileInfo(direct).absoluteFilePath();
+    if (QFileInfo(direct).isFile()) return QFileInfo(direct).absoluteFilePath();
 
     const QString nested = dir.filePath(QStringLiteral("items/items.toml"));
-    if (QFileInfo::isFile(nested)) return QFileInfo(nested).absoluteFilePath();
+    if (QFileInfo(nested).isFile()) return QFileInfo(nested).absoluteFilePath();
     return QString();
 }
 

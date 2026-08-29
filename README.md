@@ -107,21 +107,22 @@ that are shipped beside it in the ready-to-run archive.
 
 ## Build on Windows without Qt Creator
 
-The supported release build uses Visual Studio 2022, CMake, and a pinned vcpkg
-manifest. Qt Creator and a separately installed Qt SDK are not required.
+The supported release build uses Visual Studio, CMake, an existing vcpkg
+installation, and the pinned vcpkg manifest. Qt Creator and a separately
+installed Qt SDK are not required.
 
 ### Requirements
 
 - Windows 10 or Windows 11, x64
-- [Git for Windows](https://git-scm.com/download/win)
 - [CMake 3.24 or newer](https://cmake.org/download/)
-- Visual Studio 2022 Community or Build Tools 2022 with the
+- Visual Studio 2022/2026 Community or Build Tools with the
   **Desktop development with C++** workload
+- An existing [vcpkg installation](https://learn.microsoft.com/vcpkg/get_started/get-started)
 - An internet connection for the first dependency build
 
-The first build downloads vcpkg and builds Qt 6.10.2. This can take a long time
-and use significant disk space. Later builds reuse the local vcpkg binary
-cache.
+The first build installs the manifest dependencies and builds Qt 6.10.2. This
+can take a long time and use significant disk space. Later builds reuse the
+local vcpkg binary cache.
 
 ### One-command build
 
@@ -133,13 +134,12 @@ Clone the repository and run:
 
 The script:
 
-1. verifies Git, CMake, Visual Studio, and the MSVC C++ toolchain;
-2. downloads the pinned vcpkg release into `.tools/vcpkg`;
-3. installs the dependencies declared in `vcpkg.json`;
-4. configures the `windows-vcpkg` CMake preset;
-5. builds the Release configuration;
-6. deploys only the required Qt runtime;
-7. creates the ready-to-run and source folders and ZIP archives.
+1. verifies CMake, Visual Studio, the MSVC C++ toolchain, and `VCPKG_ROOT`;
+2. installs the dependencies declared in `vcpkg.json` using that existing vcpkg;
+3. configures the `windows-vcpkg` CMake preset;
+4. builds the Release configuration;
+5. deploys only the required Qt runtime;
+6. creates the ready-to-run and source folders and ZIP archives.
 
 Build output:
 
@@ -170,10 +170,20 @@ directly:
 .\scripts\build-release.ps1
 ```
 
-After vcpkg has been bootstrapped, the underlying commands are:
+Set `VCPKG_ROOT` to the shared vcpkg installation before running the script:
 
 ```powershell
-$env:VCPKG_ROOT = "$PWD\.tools\vcpkg"
+$env:VCPKG_ROOT = "C:\vcpkg"
+.\scripts\build-release.ps1
+```
+
+The release script automatically uses the CMake bundled with Visual Studio
+when available and selects the VS2026 preset for a Visual Studio 2026
+installation.
+
+The underlying CMake commands are:
+
+```powershell
 cmake --preset windows-vcpkg
 cmake --build --preset windows-release
 ```

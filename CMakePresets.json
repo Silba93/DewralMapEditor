@@ -28,6 +28,29 @@
         "VCPKG_TARGET_TRIPLET": "x64-windows-release",
         "VCPKG_HOST_TRIPLET": "x64-windows-release"
       }
+    },
+    {
+      "name": "windows-vs2026-vcpkg",
+      "displayName": "Windows x64 Release (VS2026 + vcpkg)",
+      "description": "Builds DME with Visual Studio 2026 and dependencies from vcpkg.",
+      "generator": "Visual Studio 18 2026",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "binaryDir": "${sourceDir}/build/vcpkg-windows-vs2026",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "VCPKG_OVERLAY_TRIPLETS": {
+          "type": "PATH",
+          "value": "${sourceDir}/triplets"
+        },
+        "VCPKG_TARGET_TRIPLET": "x64-windows-release",
+        "VCPKG_HOST_TRIPLET": "x64-windows-release"
+      }
     }
   ],
   "buildPresets": [
@@ -35,6 +58,16 @@
       "name": "windows-release",
       "displayName": "Build the Windows release package",
       "configurePreset": "windows-vcpkg",
+      "configuration": "Release",
+      "targets": [
+        "package_all"
+      ],
+      "jobs": 0
+    },
+    {
+      "name": "windows-vs2026-release",
+      "displayName": "Build the Windows VS2026 release package",
+      "configurePreset": "windows-vs2026-vcpkg",
       "configuration": "Release",
       "targets": [
         "package_all"

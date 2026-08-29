@@ -36,6 +36,14 @@ if(NOT deploy_result EQUAL 0)
     message(FATAL_ERROR "windeployqt failed with exit code ${deploy_result}")
 endif()
 
+# Keep the deployed application self-contained. Without this file Qt uses the
+# build-time installation's QML import path instead of the qml directory next
+# to DME.exe.
+file(WRITE "${APPLICATION_DIRECTORY}/qt.conf"
+    "[Paths]\n"
+    "Prefix=.\n"
+    "Qml2Imports=qml\n")
+
 # windeployqt does not remove files left by an older, broader deployment and
 # qmlimportscanner deploys every available Controls style. DME uses Basic.
 set(obsolete_runtime_paths

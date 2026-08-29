@@ -92,7 +92,7 @@ bool MapChunkStore::removeChunkLocked(int floor, quint64 key)
     bool removed = false;
     auto floorIt = m_quadCache.find(floor);
     if (floorIt != m_quadCache.end()) {
-        removed = floorIt->remove(key) > 0;
+        removed = floorIt->remove(key);
         if (floorIt->isEmpty()) m_quadCache.erase(floorIt);
     }
 
