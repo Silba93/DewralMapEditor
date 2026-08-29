@@ -147,6 +147,21 @@ Item {
             dat: Backend.datReader
             spr: Backend.sprReader
             reverseCtrlScroll: workspace.settings.reverseCtrlScroll
+            showAnimations: workspace.settings.showAnimations
+            torchOn: workspace.settings.torchOn
+            lightAmbient: workspace.settings.lightAmbient
+            minimapOn: workspace.settings.minimapOn
+            showShade: workspace.settings.showShade
+            showLowerFloors: workspace.settings.showLowerFloors
+            placeEffect: workspace.settings.placeEffect
+            showGrid: workspace.settings.showGrid
+            showWallOutlines: workspace.settings.showWallOutlines
+            showPathing: workspace.settings.showPathing
+            showCreatures: workspace.settings.showCreatures
+            showSpawns: workspace.settings.showSpawns
+            showHouses: workspace.settings.showHouses
+            showZones: workspace.settings.showZones
+            showZonesAlways: workspace.settings.showZonesAlways
             floor: 7
             Component.onCompleted: {
                 setBrushStore(Backend.brushStore);
@@ -155,6 +170,39 @@ Item {
             onContextMenuRequested: (x, y) => {
                 mapArea.ctx = mapView.contextInfo();
                 contextMenu.popup(x, y);
+            }
+        }
+
+        Connections {
+            target: mapView
+            function onShowAnimationsChanged() {
+                workspace.settings.showAnimations = mapView.showAnimations;
+            }
+            function onTorchChanged() {
+                workspace.settings.torchOn = mapView.torchOn;
+                workspace.settings.lightAmbient = mapView.lightAmbient;
+            }
+            function onMinimapOnChanged() {
+                workspace.settings.minimapOn = mapView.minimapOn;
+            }
+            function onShowLowerFloorsChanged() {
+                workspace.settings.showLowerFloors = mapView.showLowerFloors;
+            }
+            function onShowShadeChanged() {
+                workspace.settings.showShade = mapView.showShade;
+            }
+            function onPlaceEffectChanged() {
+                workspace.settings.placeEffect = mapView.placeEffect;
+            }
+            function onViewFlagsChanged() {
+                workspace.settings.showGrid = mapView.showGrid;
+                workspace.settings.showWallOutlines = mapView.showWallOutlines;
+                workspace.settings.showPathing = mapView.showPathing;
+                workspace.settings.showCreatures = mapView.showCreatures;
+                workspace.settings.showSpawns = mapView.showSpawns;
+                workspace.settings.showHouses = mapView.showHouses;
+                workspace.settings.showZones = mapView.showZones;
+                workspace.settings.showZonesAlways = mapView.showZonesAlways;
             }
         }
 
@@ -615,7 +663,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: -4
                     hoverEnabled: true
-                    onClicked: mapView.minimapOn = false
+                    onClicked: workspace.settings.minimapOn = false
                 }
             }
             MinimapView {

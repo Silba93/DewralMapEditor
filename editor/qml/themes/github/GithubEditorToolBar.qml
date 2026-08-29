@@ -227,9 +227,9 @@ Item {
             buttonHeight: toolBar.rightButtonHeight
             anchors.verticalCenter: parent.verticalCenter
             iconName: "animation"
-            active: toolBar.mapView.showAnimations
-            tip: toolBar.mapView.showAnimations ? "Disable item animations" : "Enable item animations"
-            onClicked: toolBar.mapView.showAnimations = !toolBar.mapView.showAnimations
+            active: toolBar.settings.showAnimations
+            tip: toolBar.settings.showAnimations ? "Disable item animations" : "Enable item animations"
+            onClicked: toolBar.settings.showAnimations = !toolBar.settings.showAnimations
         }
 
         ToolbarButton {
@@ -238,9 +238,9 @@ Item {
             buttonHeight: toolBar.rightButtonHeight
             anchors.verticalCenter: parent.verticalCenter
             iconName: "wall-outlines"
-            active: toolBar.mapView.showWallOutlines
-            tip: toolBar.mapView.showWallOutlines ? "Hide wall outlines" : "Show wall outlines"
-            onClicked: toolBar.mapView.showWallOutlines = !toolBar.mapView.showWallOutlines
+            active: toolBar.settings.showWallOutlines
+            tip: toolBar.settings.showWallOutlines ? "Hide wall outlines" : "Show wall outlines"
+            onClicked: toolBar.settings.showWallOutlines = !toolBar.settings.showWallOutlines
         }
 
         ToolbarButton {
@@ -249,9 +249,9 @@ Item {
             buttonHeight: toolBar.rightButtonHeight
             anchors.verticalCenter: parent.verticalCenter
             iconName: "sun"
-            active: toolBar.mapView.torchOn
+            active: toolBar.settings.torchOn
             tip: "Lighting preview"
-            onClicked: toolBar.mapView.torchOn = !toolBar.mapView.torchOn
+            onClicked: toolBar.settings.torchOn = !toolBar.settings.torchOn
         }
 
         ToolbarButton {
@@ -260,9 +260,9 @@ Item {
             buttonHeight: toolBar.rightButtonHeight
             anchors.verticalCenter: parent.verticalCenter
             iconName: "grid"
-            active: toolBar.mapView.showGrid
+            active: toolBar.settings.showGrid
             tip: "Show grid"
-            onClicked: toolBar.mapView.showGrid = !toolBar.mapView.showGrid
+            onClicked: toolBar.settings.showGrid = !toolBar.settings.showGrid
         }
 
         ToolbarButton {
@@ -271,9 +271,9 @@ Item {
             buttonHeight: toolBar.rightButtonHeight
             anchors.verticalCenter: parent.verticalCenter
             iconName: "minimap"
-            active: toolBar.mapView.minimapOn
-            tip: toolBar.mapView.minimapOn ? "Hide minimap" : "Show minimap"
-            onClicked: toolBar.mapView.minimapOn = !toolBar.mapView.minimapOn
+            active: toolBar.settings.minimapOn
+            tip: toolBar.settings.minimapOn ? "Hide minimap" : "Show minimap"
+            onClicked: toolBar.settings.minimapOn = !toolBar.settings.minimapOn
         }
 
         ToolbarButton {

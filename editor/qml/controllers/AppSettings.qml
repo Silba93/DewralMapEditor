@@ -8,6 +8,21 @@ Settings {
     property string mapProfilesJson: "{}"
     property string mapViewPositionsJson: "{}"
     property bool reverseCtrlScroll: false
+    property bool showAnimations: false
+    property bool torchOn: false
+    property int lightAmbient: 40
+    property bool minimapOn: false
+    property bool showShade: true
+    property bool showLowerFloors: true
+    property bool placeEffect: true
+    property bool showGrid: false
+    property bool showWallOutlines: true
+    property bool showPathing: false
+    property bool showCreatures: true
+    property bool showSpawns: true
+    property bool showHouses: true
+    property bool showZones: true
+    property bool showZonesAlways: true
     property string recentMapsJson: "[]"
     property string customPalettesJson: "{}"
     property string recentBrushesJson: "{}"

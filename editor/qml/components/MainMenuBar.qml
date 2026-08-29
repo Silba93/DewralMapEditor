@@ -445,16 +445,16 @@ DmeMenuBar {
             text: "Show animation"
             shortcut: "L"
             checkable: true
-            checked: menuBar.mapView.showAnimations
-            onTriggered: menuBar.mapView.showAnimations =
-                         !menuBar.mapView.showAnimations
+            checked: menuBar.settings.showAnimations
+            onTriggered: menuBar.settings.showAnimations =
+                         !menuBar.settings.showAnimations
         }
         Action {
             text: "Show light"
             shortcut: "Shift+L"
             checkable: true
-            checked: menuBar.mapView.torchOn
-            onTriggered: menuBar.mapView.torchOn = !menuBar.mapView.torchOn
+            checked: menuBar.settings.torchOn
+            onTriggered: menuBar.settings.torchOn = !menuBar.settings.torchOn
         }
         DmeMenu {
             id: lightStrengthMenu
@@ -472,8 +472,8 @@ DmeMenuBar {
                     required property var modelData
                     text: modelData.label
                     checkable: true
-                    checked: menuBar.mapView.lightAmbient === modelData.value
-                    onTriggered: menuBar.mapView.lightAmbient = modelData.value
+                    checked: menuBar.settings.lightAmbient === modelData.value
+                    onTriggered: menuBar.settings.lightAmbient = modelData.value
                 }
                 onObjectAdded: (index, object) =>
                     lightStrengthMenu.insertItem(index, object)
@@ -485,8 +485,8 @@ DmeMenuBar {
             text: "Show minimap"
             shortcut: "M"
             checkable: true
-            checked: menuBar.mapView.minimapOn
-            onTriggered: menuBar.mapView.minimapOn = !menuBar.mapView.minimapOn
+            checked: menuBar.settings.minimapOn
+            onTriggered: menuBar.settings.minimapOn = !menuBar.settings.minimapOn
         }
         Action {
             text: "In-game preview window"
@@ -501,21 +501,21 @@ DmeMenuBar {
             text: "Show shade"
             shortcut: "Q"
             checkable: true
-            checked: menuBar.mapView.showShade
-            onTriggered: menuBar.mapView.showShade = !menuBar.mapView.showShade
+            checked: menuBar.settings.showShade
+            onTriggered: menuBar.settings.showShade = !menuBar.settings.showShade
         }
         Action {
             text: "Show lower floors"
             shortcut: "Ctrl+W"
             checkable: true
-            checked: menuBar.mapView.showLowerFloors
-            onTriggered: menuBar.mapView.showLowerFloors = !menuBar.mapView.showLowerFloors
+            checked: menuBar.settings.showLowerFloors
+            onTriggered: menuBar.settings.showLowerFloors = !menuBar.settings.showLowerFloors
         }
         Action {
             text: "Placement effect"
             checkable: true
-            checked: menuBar.mapView.placeEffect
-            onTriggered: menuBar.mapView.placeEffect = !menuBar.mapView.placeEffect
+            checked: menuBar.settings.placeEffect
+            onTriggered: menuBar.settings.placeEffect = !menuBar.settings.placeEffect
         }
         MenuSeparator {}
 
@@ -523,8 +523,8 @@ DmeMenuBar {
             text: "Show grid"
             shortcut: "Shift+G"
             checkable: true
-            checked: menuBar.mapView.showGrid
-            onTriggered: menuBar.mapView.showGrid = !menuBar.mapView.showGrid
+            checked: menuBar.settings.showGrid
+            onTriggered: menuBar.settings.showGrid = !menuBar.settings.showGrid
         }
         Action {
             text: "Show client box"
@@ -553,47 +553,47 @@ DmeMenuBar {
         Action {
             text: "Show wall outlines"
             checkable: true
-            checked: menuBar.mapView.showWallOutlines
-            onTriggered: menuBar.mapView.showWallOutlines = !menuBar.mapView.showWallOutlines
+            checked: menuBar.settings.showWallOutlines
+            onTriggered: menuBar.settings.showWallOutlines = !menuBar.settings.showWallOutlines
         }
         Action {
             text: "Show pathing"
             shortcut: "O"
             checkable: true
-            checked: menuBar.mapView.showPathing
-            onTriggered: menuBar.mapView.showPathing = !menuBar.mapView.showPathing
+            checked: menuBar.settings.showPathing
+            onTriggered: menuBar.settings.showPathing = !menuBar.settings.showPathing
         }
 
         Action {
             text: "Show creatures  (F)"
             checkable: true
-            checked: menuBar.mapView.showCreatures
-            onTriggered: menuBar.mapView.showCreatures = !menuBar.mapView.showCreatures
+            checked: menuBar.settings.showCreatures
+            onTriggered: menuBar.settings.showCreatures = !menuBar.settings.showCreatures
         }
         Action {
             text: "Show spawns  (S)"
             checkable: true
-            checked: menuBar.mapView.showSpawns
-            onTriggered: menuBar.mapView.showSpawns = !menuBar.mapView.showSpawns
+            checked: menuBar.settings.showSpawns
+            onTriggered: menuBar.settings.showSpawns = !menuBar.settings.showSpawns
         }
         Action {
             text: "Show houses"
             shortcut: "Ctrl+H"
             checkable: true
-            checked: menuBar.mapView.showHouses
-            onTriggered: menuBar.mapView.showHouses = !menuBar.mapView.showHouses
+            checked: menuBar.settings.showHouses
+            onTriggered: menuBar.settings.showHouses = !menuBar.settings.showHouses
         }
         Action {
             text: "Show special zones  (E)"
             checkable: true
-            checked: menuBar.mapView.showZones
-            onTriggered: menuBar.mapView.showZones = !menuBar.mapView.showZones
+            checked: menuBar.settings.showZones
+            onTriggered: menuBar.settings.showZones = !menuBar.settings.showZones
         }
         Action {
             text: "Always show zones"
             checkable: true
-            checked: menuBar.mapView.showZonesAlways
-            onTriggered: menuBar.mapView.showZonesAlways = !menuBar.mapView.showZonesAlways
+            checked: menuBar.settings.showZonesAlways
+            onTriggered: menuBar.settings.showZonesAlways = !menuBar.settings.showZonesAlways
         }
     }
 

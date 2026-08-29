@@ -205,11 +205,11 @@ Item {
             height: 38
             iconSize: 32
             anchors.verticalCenter: parent.verticalCenter
-            active: toolBar.mapView.torchOn
+            active: toolBar.settings.torchOn
             tip: "Lighting preview"
 
-            iconSource: toolBar.mapView.torchOn ? "qrc:/ui/LightON.png" : "qrc:/ui/LightOFF.png"
-            onClicked: toolBar.mapView.torchOn = !toolBar.mapView.torchOn
+            iconSource: toolBar.settings.torchOn ? "qrc:/ui/LightON.png" : "qrc:/ui/LightOFF.png"
+            onClicked: toolBar.settings.torchOn = !toolBar.settings.torchOn
         }
 
         TbBtn {
@@ -217,10 +217,10 @@ Item {
             height: 38
             iconSize: 26
             anchors.verticalCenter: parent.verticalCenter
-            active: toolBar.mapView.showAnimations
+            active: toolBar.settings.showAnimations
             tip: "Item animations"
             iconSource: "qrc:/ui/conditions.png"
-            onClicked: toolBar.mapView.showAnimations = !toolBar.mapView.showAnimations
+            onClicked: toolBar.settings.showAnimations = !toolBar.settings.showAnimations
         }
 
         TbBtn {
@@ -228,10 +228,10 @@ Item {
             height: 38
             iconSize: 26
             anchors.verticalCenter: parent.verticalCenter
-            active: toolBar.mapView.minimapOn
+            active: toolBar.settings.minimapOn
             tip: "Minimap"
             iconSource: "qrc:/ui/compass.png"
-            onClicked: toolBar.mapView.minimapOn = !toolBar.mapView.minimapOn
+            onClicked: toolBar.settings.minimapOn = !toolBar.settings.minimapOn
         }
 
         Rectangle {
