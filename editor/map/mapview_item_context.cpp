@@ -506,6 +506,42 @@ bool MapView::addContextContainerItem(const QVariantList &pathValues, int server
     return changed;
 }
 
+bool MapView::applyContainerItemProperties(const QVariantList &pathValues,
+                                           const QVariantMap &props)
+{
+    if (!m_otbm || !props.contains(QStringLiteral("text"))) return false;
+    std::vector<int> path;
+    path.reserve(static_cast<size_t>(pathValues.size()));
+    for (const QVariant &value : pathValues) path.push_back(value.toInt());
+
+    bool changed = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_dataMutex);
+        const OtbmMapItem *item = m_otbm->itemAtPath(
+            m_itemController.contextX(), m_itemController.contextY(),
+            m_navigationController.floor(), path);
+        if (!item) return false;
+
+        const int cid = m_otb ? m_otb->clientIdForServerId(item->server_id) : 0;
+        const ClientItem *ci = (m_dat && cid > 0)
+            ? m_dat->itemByClientId(static_cast<uint16_t>(cid)) : nullptr;
+        const QString current = item->extra ? item->extra->text : QString();
+        if ((!ci || !ci->is_writable) && current.isEmpty()) return false;
+
+        changed = m_otbm->setItemTextAtPath(
+            m_itemController.contextX(), m_itemController.contextY(),
+            m_navigationController.floor(), path,
+            props.value(QStringLiteral("text")).toString());
+        if (changed) {
+            onTileEdited(m_itemController.contextX(), m_itemController.contextY(),
+                         m_navigationController.floor());
+            flushEditedChunksLocked();
+        }
+    }
+    if (changed) refreshAfterEdit(0);
+    return changed;
+}
+
 bool MapView::removeContextContainerItem(const QVariantList &pathValues, int childIndex)
 {
     if (!m_otbm) return false;

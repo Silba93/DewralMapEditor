@@ -8,6 +8,7 @@ DmeDialog {
     required property var ctx
     property var mapCtrl: null
     property var containerDialog: null
+    property var contextPath: []
 
     title: hasCreature
            ? "Creature & Spawn Properties"
@@ -96,7 +97,10 @@ DmeDialog {
                 }
                 p["customAttributes"] = attributes;
             }
-            mapCtrl.applyContextItemProperties(p);
+            if (contextPath && contextPath.length > 1)
+                mapCtrl.applyContainerItemProperties(contextPath, p);
+            else
+                mapCtrl.applyContextItemProperties(p);
         }
 
         if (mapCtrl && hasCreature)
@@ -477,8 +481,10 @@ DmeDialog {
                         propsDialog.close();
                         if (propsDialog.containerDialog)
                             propsDialog.containerDialog.open(
-                                propsDialog.mapCtrl.contextItemPath(),
-                                propsDialog.ctx.name || "Container");
+                            propsDialog.contextPath && propsDialog.contextPath.length > 0
+                            ? propsDialog.contextPath
+                            : propsDialog.mapCtrl.contextItemPath(),
+                            propsDialog.ctx.name || "Container");
                     }
                 }
                 DmeButton {

@@ -617,14 +617,17 @@ Window {
     QtObject {
         id: propsDialog
         property var contextOverride: null
+        property var contextPathOverride: []
 
         function open() {
             contextOverride = null;
+            contextPathOverride = [];
             propsDialogLoader.active = true;
             propsDialogLoader.item["open"]();
         }
-        function openWithContext(itemContext) {
+        function openWithContext(itemContext, itemPath) {
             contextOverride = itemContext;
+            contextPathOverride = itemPath || [];
             propsDialogLoader.active = true;
             propsDialogLoader.item["open"]();
         }
@@ -634,11 +637,13 @@ Window {
         active: false
         sourceComponent: ItemPropertiesDialog {
             ctx: propsDialog.contextOverride || workspace.context
+            contextPath: propsDialog.contextPathOverride
             mapCtrl: workspace.mapView
             containerDialog: containerDialog
             onClosed: Qt.callLater(() => {
                 propsDialogLoader.active = false;
                 propsDialog.contextOverride = null;
+                propsDialog.contextPathOverride = [];
             })
         }
     }
@@ -678,6 +683,7 @@ Window {
         active: false
         sourceComponent: ContainerDialog {
             mapCtrl: workspace.mapView
+            propertiesDialog: propsDialog
             onClosed: Qt.callLater(() => containerLoader.active = false)
         }
     }

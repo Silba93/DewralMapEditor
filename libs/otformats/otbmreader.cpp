@@ -2126,6 +2126,25 @@ bool OtbmReader::setItemTextAt(int x, int y, int z, int index, const QString &te
     });
 }
 
+bool OtbmReader::setItemTextAtPath(int x, int y, int z,
+                                   const std::vector<int> &path,
+                                   const QString &text)
+{
+    auto it = m_posIndex.find(posKey3d(x, y, z));
+    if (it == m_posIndex.end()) return false;
+    OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
+    OtbmMapItem *item = itemAtPath(tile, path);
+    if (!item) return false;
+
+    const QString current = item->extra ? item->extra->text : QString();
+    if (current == text || (text.isEmpty() && !item->extra)) return false;
+    recordTile(x, y, z);
+    item = itemAtPath(tile, path);
+    item->ensureExtra().text = text;
+    if (!m_undoGrouping) notifyMapChanged();
+    return true;
+}
+
 bool OtbmReader::setItemDescriptionAt(int x, int y, int z, int index,
                                       const QString &description)
 {

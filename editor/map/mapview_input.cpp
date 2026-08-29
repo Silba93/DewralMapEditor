@@ -141,6 +141,35 @@ void MapView::mousePressEvent(QMouseEvent *event)
     m_pointerMovePending = false;
     m_navigationController.lastMouse() = event->position();
 
+    if (event->type() == QEvent::MouseButtonDblClick
+        && event->button() == Qt::LeftButton
+        && !m_editController.selectionMode()
+        && !m_selectionController.pasting()
+        && !m_pathBuilder.active()
+        && m_brushController.serverId() <= 0
+        && m_editController.activeZone() == 0
+        && !m_editController.eraseMode()
+        && !m_brushController.spawnBrush()
+        && m_brushController.creatureBrush().isEmpty()
+        && m_brushController.houseBrush() <= 0) {
+        const QPoint t = tileAtScreen(event->position());
+        const OtbmTile *tile = currentFloorTileAt(t.x(), t.y());
+        const bool onItem = tile && (!tile->items.empty()
+                                     || !tile->creature_name.isEmpty()
+                                     || tile->spawn_radius > 0);
+        if (onItem) {
+            m_itemController.contextX() = t.x();
+            m_itemController.contextY() = t.y();
+            m_itemController.contextItemIndex() = tile->items.empty()
+                    ? -1 : static_cast<int>(tile->items.size()) - 1;
+            m_selectionController.moving() = false;
+            m_selectionController.moveChanged() = false;
+            emit itemDoubleClicked();
+            event->accept();
+            return;
+        }
+    }
+
     if (m_pathBuilder.active()) {
         if (event->button() == Qt::LeftButton) {
             const QPoint tile = tileAtScreen(event->position());

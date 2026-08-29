@@ -175,6 +175,12 @@ Item {
                 mapArea.ctx = mapView.contextInfo();
                 contextMenu.popup(x, y);
             }
+            onItemDoubleClicked: {
+                mapArea.ctx = mapView.contextInfo();
+                if (mapArea.ctx.hasItem || mapArea.ctx.creatureName !== ""
+                        || mapArea.ctx.spawnRadius > 0)
+                    workspace.propertiesDialog.open();
+            }
         }
 
         Connections {

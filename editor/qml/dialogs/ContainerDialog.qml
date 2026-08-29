@@ -13,6 +13,7 @@ DmeDialog {
     property var items: []
     property var selectedItem: null
     property var titles: []
+    property var propertiesDialog: null
     readonly property bool githubUi: Backend.uiTheme.style !== "classic"
     readonly property bool grayUi: Backend.uiTheme.style === "gray-dark"
 
@@ -185,9 +186,9 @@ DmeDialog {
                         hoverEnabled: true
                         onClicked: dialog.selectRow(itemRow.index)
                         onDoubleClicked: {
-                            if (itemRow.modelData.groupName === "Container"
-                                || itemRow.modelData.childCount > 0)
-                                dialog.openSelectedContainer();
+                            if (dialog.propertiesDialog)
+                                dialog.propertiesDialog.openWithContext(
+                                    itemRow.modelData, itemRow.modelData.path);
                         }
                     }
                 }
@@ -215,7 +216,7 @@ DmeDialog {
             DmeSpinBox {
                 id: newItemId
                 width: 120
-                from: 100
+                from: 1
                 to: 65535
             }
             Text {
