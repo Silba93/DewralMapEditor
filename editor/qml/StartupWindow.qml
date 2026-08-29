@@ -61,7 +61,7 @@ Window {
         versionFolderDialogStartup.open();
     }
     function openItemDataDialog() {
-        itemDataDialogStartup.open();
+        itemDataFileDialogStartup.open();
     }
     function beginRecoveryLoad(path) {
         loadingMapPath = path;
@@ -73,11 +73,11 @@ Window {
     transientParent: null
     visible: !app.started
     width: loadingMap ? 460 : 800
-    height: loadingMap ? 190 : 520
+    height: loadingMap ? 190 : 560
     minimumWidth: loadingMap ? 460 : 800
     maximumWidth: loadingMap ? 460 : 800
-    minimumHeight: loadingMap ? 190 : 520
-    maximumHeight: loadingMap ? 190 : 520
+    minimumHeight: loadingMap ? 190 : 560
+    maximumHeight: loadingMap ? 190 : 560
     x: Screen.width / 2 - width / 2
     y: Screen.height / 2 - height / 2
     title: "Dewral Map Editor"
@@ -110,7 +110,7 @@ Window {
         visible: !startupScreen.loadingMap && Backend.docMgr.recoveryCount === 0
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 760)
-        height: Math.min(parent.height - 80, 440)
+        height: Math.min(parent.height - 80, 480)
 
         Item {
             id: titleBar
@@ -167,10 +167,17 @@ Window {
             DmePanel {
                 width: 280
                 height: parent.height
-                Column {
+                Flickable {
                     anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 14
+                    anchors.margins: 18
+                    contentWidth: width
+                    contentHeight: startupSettings.implicitHeight
+                    clip: true
+
+                    Column {
+                        id: startupSettings
+                        width: parent.width
+                        spacing: 14
 
                     Column {
                         spacing: 4
@@ -270,18 +277,7 @@ Window {
                     }
 
                     DmeButton {
-                        width: 112
-                        height: 21
-                        text: "Items folder..."
-                        onClicked: {
-                            app.pendingKey = verCombo.selKey;
-                            app.pendingMapPath = "";
-                            app.pendingItemSource = "blacktek";
-                            itemDataDialogStartup.open();
-                        }
-                    }
-
-                    DmeButton {
+                        visible: sourceCombo.sourceKey === "blacktek"
                         width: 114
                         height: 21
                         text: "Items file..."
@@ -381,6 +377,7 @@ Window {
                             color: "#7a9a7a"
                             font.pixelSize: 10
                         }
+                    }
                     }
                 }
             }
@@ -635,12 +632,6 @@ Window {
         title: "Select BlackTek items.toml"
         nameFilters: ["TOML files (items.toml *.toml)", "All files (*)"]
         onAccepted: app.onItemDataPicked(selectedFile)
-    }
-
-    FolderDialog {
-        id: itemDataDialogStartup
-        title: "Select BlackTek items.toml file or its containing folder"
-        onAccepted: app.onItemDataPicked(selectedFolder)
     }
 
     FileDialog {
