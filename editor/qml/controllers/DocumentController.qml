@@ -34,6 +34,11 @@ Item {
     property bool recoveringSession: false
     property var recoveryQueue: []
     property var activeRecovery: null
+    property var mapViewPositions: ({})
+    property string lastViewPositionPath: ""
+    property var lastViewPosition: null
+    property string pendingInitialPositionPath: ""
+    property string positionedMapPath: ""
 
     property bool appCloseAllowed: false
     property var appCloseSaveQueue: []
@@ -41,6 +46,9 @@ Item {
 
     Connections {
         target: controller.mapView
+        function onContentUpdated() {
+            controller.recordCurrentMapPosition();
+        }
         function onMapLoadFinished(success, path, error) {
             if (path !== controller.activeLoadPath)
                 return;
@@ -71,6 +79,7 @@ Item {
 
     function initialize() {
         loadRecent();
+        loadMapViewPositions();
         profiles.load();
         palettes.load();
         Backend.docMgr.configureAutosave(settings.autosaveEnabled,
@@ -117,6 +126,107 @@ Item {
         }
     }
 
+    function loadMapViewPositions() {
+        try {
+            mapViewPositions = JSON.parse(settings.mapViewPositionsJson) || {};
+        } catch (e) {
+            mapViewPositions = {};
+        }
+    }
+
+    function canonicalMapPath(path) {
+        if (!path)
+            return "";
+        return Backend.fileTools.canonicalPath(path) || path;
+    }
+
+    function currentViewPosition() {
+        var tileSize = Math.max(1, mapView.tileSize);
+        return {
+            x: Math.round(mapView.glOriginX() + mapView.width / (2 * tileSize)),
+            y: Math.round(mapView.glOriginY() + mapView.height / (2 * tileSize)),
+            z: mapView.floor
+        };
+    }
+
+    function sameViewPosition(a, b) {
+        return a && b && a.x === b.x && a.y === b.y && a.z === b.z;
+    }
+
+    function recordCurrentMapPosition() {
+        if (!started || !Backend.otbmReader.loaded || Backend.otbmReader.loading)
+            return;
+        var path = canonicalMapPath(Backend.otbmReader.filePath);
+        if (!path || mapView.width <= 0 || mapView.height <= 0)
+            return;
+        var position = currentViewPosition();
+        if (lastViewPositionPath === path && sameViewPosition(lastViewPosition, position))
+            return;
+        lastViewPositionPath = path;
+        lastViewPosition = position;
+        viewPositionSaveTimer.restart();
+    }
+
+    function saveLastViewPosition() {
+        if (!lastViewPositionPath || !lastViewPosition)
+            return;
+        mapViewPositions[lastViewPositionPath] = {
+            x: lastViewPosition.x,
+            y: lastViewPosition.y,
+            z: lastViewPosition.z
+        };
+        settings.mapViewPositionsJson = JSON.stringify(mapViewPositions);
+        viewPositionSaveTimer.stop();
+    }
+
+    function validViewPosition(position) {
+        return position
+            && isFinite(Number(position.x))
+            && isFinite(Number(position.y))
+            && isFinite(Number(position.z))
+            && Number(position.z) >= 0
+            && Number(position.z) <= 15;
+    }
+
+    function scheduleInitialPosition(path) {
+        pendingInitialPositionPath = path || "";
+        if (pendingInitialPositionPath)
+            initialPositionTimer.restart();
+    }
+
+    function restoreInitialPosition(path) {
+        if (!started || !Backend.otbmReader.loaded)
+            return;
+        if (Backend.otbmReader.loading) {
+            initialPositionTimer.restart();
+            return;
+        }
+        var currentPath = canonicalMapPath(Backend.otbmReader.filePath);
+        var positionPath = canonicalMapPath(path);
+        if (!positionPath || currentPath !== positionPath)
+            return;
+        if (mapView.width <= 0 || mapView.height <= 0) {
+            initialPositionTimer.restart();
+            return;
+        }
+        if (positionedMapPath === positionPath)
+            return;
+
+        var position = mapViewPositions[positionPath];
+        if (!validViewPosition(position)) {
+            var towns = Backend.otbmReader.townsList();
+            if (towns.length > 0 && validViewPosition(towns[0]))
+                position = towns[0];
+            else
+                position = { x: 1000, y: 1000, z: 7 };
+        }
+
+        mapView.centerOnPosition(Math.round(Number(position.x)),
+                                 Math.round(Number(position.y)),
+                                 Math.round(Number(position.z)));
+        positionedMapPath = positionPath;
+    }
+
     function addRecent(path) {
         var list = recentMaps.slice();
         var index = list.indexOf(path);
@@ -160,6 +270,8 @@ Item {
     function loadEverything(mapPath, preferredProfileKey, preferredItemSource) {
         if (mapPath === "")
             return false;
+
+        positionedMapPath = "";
 
         var existing = Backend.docMgr.indexOfPath(mapPath);
         if (existing >= 0) {
@@ -244,6 +356,7 @@ Item {
         Backend.docMgr.setCurrentProfileKey(profiles.loadedClientKey);
         addRecent(mapPath);
         started = true;
+        scheduleInitialPosition(mapPath);
         if (Backend.otbmReader.loading) {
             Backend.otbmReader.reportLoadingProgress(100, "Map ready");
             // Let the main window complete one scene-graph turn before the
@@ -336,6 +449,8 @@ Item {
             addRecent(path);
             profiles.rememberMapProfile(path, profiles.loadedClientKey,
                                         profiles.loadedItemSource);
+            recordCurrentMapPosition();
+            saveLastViewPosition();
             showToast("Saved: " + Backend.fileTools.fileName(path));
             if (appCloseSaveAsPending) {
                 appCloseSaveAsPending = false;
@@ -404,6 +519,7 @@ Item {
     }
 
     function finishAppClose() {
+        saveLastViewPosition();
         appCloseAllowed = true;
         appWindow.close();
     }
@@ -461,11 +577,17 @@ Item {
     Connections {
         target: Backend.docMgr
         function onCurrentChanged() {
+            controller.saveLastViewPosition();
+            controller.positionedMapPath = "";
             if (Backend.docMgr.current && Backend.docMgr.current.loaded)
                 controller.profiles.ensureClientLoaded(
                     Backend.docMgr.current,
                     Backend.docMgr.currentProfileKey,
                     Backend.docMgr.currentItemSource);
+            Qt.callLater(function () {
+                if (Backend.otbmReader && Backend.otbmReader.loaded)
+                    controller.scheduleInitialPosition(Backend.otbmReader.filePath);
+            });
         }
         function onAutosaveFailed(title, error) {
             controller.showToast("Autosave failed"
@@ -486,5 +608,19 @@ Item {
         id: toastTimer
         interval: 1800
         onTriggered: controller.savedToast = ""
+    }
+
+    Timer {
+        id: viewPositionSaveTimer
+        interval: 400
+        repeat: false
+        onTriggered: controller.saveLastViewPosition()
+    }
+
+    Timer {
+        id: initialPositionTimer
+        interval: 50
+        repeat: false
+        onTriggered: controller.restoreInitialPosition(controller.pendingInitialPositionPath)
     }
 }

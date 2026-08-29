@@ -119,6 +119,9 @@ Item {
     function rememberMapProfile(path, key, source) {
         profiles.rememberMapProfile(path, key, source);
     }
+    function mapProfileFor(path) {
+        return profiles.mapProfileFor(path);
+    }
     function switchMapProfile(key, source) {
         return profiles.switchMapProfile(key, source);
     }

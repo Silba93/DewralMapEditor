@@ -6,6 +6,7 @@ Settings {
     property string itemDataPathsJson: "{}"
     property string customProfilesJson: "[]"
     property string mapProfilesJson: "{}"
+    property string mapViewPositionsJson: "{}"
     property string recentMapsJson: "[]"
     property string customPalettesJson: "{}"
     property string recentBrushesJson: "{}"

@@ -34,6 +34,18 @@ Window {
     function beginLoadMap(path, profileKey, itemSource) {
         if (!path || loadingMap)
             return;
+
+        // Opening a map from the startup screen initially supplies the combo
+        // box defaults. Reuse the map-specific profile when one was saved so
+        // BlackTek maps do not get retried as Standard maps.
+        var remembered = app.mapProfileFor(path);
+        if (remembered) {
+            if (remembered.profileKey)
+                profileKey = remembered.profileKey;
+            if (remembered.itemSource)
+                itemSource = remembered.itemSource;
+            sourceCombo.currentIndex = itemSource === "blacktek" ? 1 : 0;
+        }
         loadingMapPath = path;
         loadingProfileKey = profileKey || "";
         loadingItemSource = itemSource || "";
