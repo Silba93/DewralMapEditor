@@ -1421,11 +1421,8 @@ bool OtbmReader::loadNotes(const QString &mapPath)
 
     const QFileInfo mapInfo(mapPath);
     const QDir mapDir = mapInfo.dir();
-    QString path = mapDir.filePath(QStringLiteral("notes.xml"));
-    const QString recoveryNotesPath = mapDir.filePath(
+    const QString path = mapDir.filePath(
         mapInfo.completeBaseName() + QStringLiteral("-notes.xml"));
-    if (!QFileInfo::exists(path) && QFileInfo::exists(recoveryNotesPath))
-        path = recoveryNotesPath;
     QFile file(path);
     if (!file.exists()) {
         m_notesLoaded = true;
@@ -1483,9 +1480,7 @@ bool OtbmReader::buildNotesXml(const QString &mapPath, QString &targetPath,
     if (!m_notesLoaded && !m_notesModified) return true;
 
     const QFileInfo mapInfo(mapPath);
-    const QString fileName = m_recoveryMode
-        ? mapInfo.completeBaseName() + QStringLiteral("-notes.xml")
-        : QStringLiteral("notes.xml");
+    const QString fileName = mapInfo.completeBaseName() + QStringLiteral("-notes.xml");
     targetPath = mapInfo.dir().filePath(fileName);
     if (m_notes.empty()) {
         removeTarget = true;
