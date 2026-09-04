@@ -406,6 +406,10 @@ public:
     bool setItemCountAt(int x, int y, int z, int index, uint16_t count);
     bool setItemActionIdAt(int x, int y, int z, int index, uint16_t actionId);
     bool setItemUniqueIdAt(int x, int y, int z, int index, uint16_t uniqueId);
+    bool setItemActionIdAtPath(int x, int y, int z, const std::vector<int> &path,
+                               uint16_t actionId);
+    bool setItemUniqueIdAtPath(int x, int y, int z, const std::vector<int> &path,
+                               uint16_t uniqueId);
     bool setItemTextAt(int x, int y, int z, int index, const QString &text);
     bool setItemTextAtPath(int x, int y, int z, const std::vector<int> &path,
                            const QString &text);

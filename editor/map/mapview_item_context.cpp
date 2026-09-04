@@ -509,7 +509,7 @@ bool MapView::addContextContainerItem(const QVariantList &pathValues, int server
 bool MapView::applyContainerItemProperties(const QVariantList &pathValues,
                                            const QVariantMap &props)
 {
-    if (!m_otbm || !props.contains(QStringLiteral("text"))) return false;
+    if (!m_otbm || props.isEmpty()) return false;
     std::vector<int> path;
     path.reserve(static_cast<size_t>(pathValues.size()));
     for (const QVariant &value : pathValues) path.push_back(value.toInt());
@@ -522,16 +522,36 @@ bool MapView::applyContainerItemProperties(const QVariantList &pathValues,
             m_navigationController.floor(), path);
         if (!item) return false;
 
-        const int cid = m_otb ? m_otb->clientIdForServerId(item->server_id) : 0;
-        const ClientItem *ci = (m_dat && cid > 0)
-            ? m_dat->itemByClientId(static_cast<uint16_t>(cid)) : nullptr;
-        const QString current = item->extra ? item->extra->text : QString();
-        if ((!ci || !ci->is_writable) && current.isEmpty()) return false;
+        if (props.contains(QStringLiteral("text"))) {
+            const int cid = m_otb ? m_otb->clientIdForServerId(item->server_id) : 0;
+            const ClientItem *ci = (m_dat && cid > 0)
+                ? m_dat->itemByClientId(static_cast<uint16_t>(cid)) : nullptr;
+            const QString current = item->extra ? item->extra->text : QString();
+            if ((!ci || !ci->is_writable) && current.isEmpty()) return false;
+        }
 
-        changed = m_otbm->setItemTextAtPath(
-            m_itemController.contextX(), m_itemController.contextY(),
-            m_navigationController.floor(), path,
-            props.value(QStringLiteral("text")).toString());
+        m_otbm->beginUndoGroup();
+        if (props.contains(QStringLiteral("actionId"))) {
+            const int value = std::clamp(props.value(QStringLiteral("actionId")).toInt(), 0, 65535);
+            changed |= m_otbm->setItemActionIdAtPath(
+                m_itemController.contextX(), m_itemController.contextY(),
+                m_navigationController.floor(), path,
+                static_cast<uint16_t>(value));
+        }
+        if (props.contains(QStringLiteral("uniqueId"))) {
+            const int value = std::clamp(props.value(QStringLiteral("uniqueId")).toInt(), 0, 65535);
+            changed |= m_otbm->setItemUniqueIdAtPath(
+                m_itemController.contextX(), m_itemController.contextY(),
+                m_navigationController.floor(), path,
+                static_cast<uint16_t>(value));
+        }
+        if (props.contains(QStringLiteral("text"))) {
+            changed |= m_otbm->setItemTextAtPath(
+                m_itemController.contextX(), m_itemController.contextY(),
+                m_navigationController.floor(), path,
+                props.value(QStringLiteral("text")).toString());
+        }
+        m_otbm->endUndoGroup();
         if (changed) {
             onTileEdited(m_itemController.contextX(), m_itemController.contextY(),
                          m_navigationController.floor());

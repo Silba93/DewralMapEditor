@@ -2117,6 +2117,40 @@ bool OtbmReader::setItemUniqueIdAt(int x, int y, int z, int index, uint16_t uniq
     });
 }
 
+bool OtbmReader::setItemActionIdAtPath(int x, int y, int z,
+                                       const std::vector<int> &path,
+                                       uint16_t actionId)
+{
+    auto it = m_posIndex.find(posKey3d(x, y, z));
+    if (it == m_posIndex.end()) return false;
+    OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
+    OtbmMapItem *item = itemAtPath(tile, path);
+    if (!item || item->actionId() == actionId) return false;
+
+    recordTile(x, y, z);
+    item = itemAtPath(tile, path);
+    item->setActionId(actionId);
+    if (!m_undoGrouping) notifyMapChanged();
+    return true;
+}
+
+bool OtbmReader::setItemUniqueIdAtPath(int x, int y, int z,
+                                       const std::vector<int> &path,
+                                       uint16_t uniqueId)
+{
+    auto it = m_posIndex.find(posKey3d(x, y, z));
+    if (it == m_posIndex.end()) return false;
+    OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
+    OtbmMapItem *item = itemAtPath(tile, path);
+    if (!item || item->uniqueId() == uniqueId) return false;
+
+    recordTile(x, y, z);
+    item = itemAtPath(tile, path);
+    item->setUniqueId(uniqueId);
+    if (!m_undoGrouping) notifyMapChanged();
+    return true;
+}
+
 bool OtbmReader::setItemTextAt(int x, int y, int z, int index, const QString &text)
 {
     return mutateItemAt(x, y, z, index, [&text](OtbmMapItem &item) {
