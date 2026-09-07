@@ -521,9 +521,12 @@ private:
     };
     struct UndoAction {
         std::vector<TileSnapshot> tiles;
+        struct HouseSnapshot { uint32_t id = 0; int entryX = 0, entryY = 0, entryZ = 0; };
+        std::vector<HouseSnapshot> houses;
         qsizetype bytes = 0;
     };
     void recordTile(int x, int y, int z);
+    void recordHouse(uint32_t id);
     void pushUndo(UndoAction &&action);
     void restoreSnapshots(const std::vector<TileSnapshot> &snapshots);
     static qsizetype estimateItemDynamicBytes(const OtbmMapItem &item);

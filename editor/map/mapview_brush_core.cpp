@@ -307,6 +307,24 @@ void MapView::placeHouseAt(int x, int y)
             const bool ok = m_brushController.eraseStroke() ? m_otbm->clearHouseTileAt(tx, ty, m_navigationController.floor())
                                           : m_otbm->setHouseTileAt(tx, ty, m_navigationController.floor(),
                                                 static_cast<uint32_t>(m_brushController.houseBrush()));
+            if (ok && !m_brushController.eraseStroke() && m_brushController.store()) {
+                const OtbmTile *houseTile = m_otbm->tileAt(tx, ty, m_navigationController.floor());
+                if (houseTile && houseTile->is_house) {
+                    for (int itemIndex = 0; itemIndex < static_cast<int>(houseTile->items.size()); ++itemIndex) {
+                        const OtbmMapItem &item = houseTile->items[static_cast<size_t>(itemIndex)];
+                        if (!m_brushController.store()->isDoorItem(item.server_id)
+                            || (item.extra && item.extra->door_id != 0)) continue;
+                        uint8_t nextId = 1;
+                        for (const OtbmTile &candidate : m_otbm->tiles()) {
+                            if (!candidate.is_house || candidate.house_id != houseTile->house_id) continue;
+                            for (const OtbmMapItem &other : candidate.items)
+                                nextId = std::max<uint8_t>(nextId,
+                                    static_cast<uint8_t>((other.extra ? other.extra->door_id : 0) + 1));
+                        }
+                        m_otbm->setItemDoorIdAt(tx, ty, m_navigationController.floor(), itemIndex, nextId);
+                    }
+                }
+            }
             if (ok) onTileEdited(tx, ty, m_navigationController.floor());
         }
     if (!m_editController.batching()) flushEditedChunksLocked();

@@ -597,6 +597,25 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
         if (output.size() >= kOverlayLimit) return output;
     }
 
+    if (includeTooltips) {
+        for (const QVariant &value : m_otbm->housesList()) {
+            const QVariantMap house = value.toMap();
+            const int x = house.value(QStringLiteral("entryX")).toInt();
+            const int y = house.value(QStringLiteral("entryY")).toInt();
+            const int z = house.value(QStringLiteral("entryZ")).toInt();
+            if (x <= 0 || y <= 0 || z != m_navigationController.floor()
+                || x < minX || x > maxX || y < minY || y > maxY) continue;
+            QVariantMap entry;
+            entry.insert(QStringLiteral("kind"), QStringLiteral("house_exit"));
+            entry.insert(QStringLiteral("x"), x);
+            entry.insert(QStringLiteral("y"), y);
+            entry.insert(QStringLiteral("name"), house.value(QStringLiteral("name")));
+            entry.insert(QStringLiteral("text"), QStringLiteral("EXIT"));
+            output.append(entry);
+            if (output.size() >= kOverlayLimit) return output;
+        }
+    }
+
     if (!includeTooltips || tileSize < 12) return output;
 
     const int minChunkX = floorDiv(minX, kChunkTiles);

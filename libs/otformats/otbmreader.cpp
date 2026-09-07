@@ -1846,6 +1846,8 @@ int OtbmReader::addHouse(int townId)
 {
     uint32_t maxId = 0;
     for (const OtbmHouse &h : m_houses) maxId = std::max(maxId, h.id);
+    for (const OtbmTile &tile : m_tiles)
+        if (tile.is_house) maxId = std::max(maxId, tile.house_id);
     OtbmHouse h;
     h.id = maxId + 1;
     h.name = QStringLiteral("Unnamed House #%1").arg(h.id);
@@ -1903,7 +1905,15 @@ void OtbmReader::setHouseEntry(int id, int x, int y, int z)
 {
     OtbmHouse *h = houseById(id);
     if (!h) return;
+    auto it = m_posIndex.find(posKey3d(x, y, z));
+    if (it == m_posIndex.end()) return;
+    const OtbmTile &tile = m_tiles[static_cast<size_t>(it.value())];
+    // The server treats this as a destination coordinate. Require an existing
+    // map tile and reject house-owned tiles; item walkability is resolved by
+    // the server's movement/teleport rules.
+    if (tile.is_house) return;
     if (h->entryX == x && h->entryY == y && h->entryZ == z) return;
+    recordHouse(static_cast<uint32_t>(id));
     h->entryX = x; h->entryY = y; h->entryZ = z;
     m_housesModified = true;
     notifyMapChanged();
@@ -2657,7 +2667,7 @@ void OtbmReader::pushUndo(UndoAction &&action)
 {
     m_redoStack.clear();
     m_redoBytes = 0;
-    if (action.tiles.empty()) return;
+    if (action.tiles.empty() && action.houses.empty()) return;
     ++m_editOperationCount;
     m_changedTileCount += static_cast<qint64>(action.tiles.size());
     if (m_undoLimit <= 0) return;
@@ -2699,6 +2709,8 @@ qsizetype OtbmReader::estimateActionBytes(const UndoAction &action)
     qsizetype bytes = static_cast<qsizetype>(sizeof(UndoAction));
     bytes += static_cast<qsizetype>(action.tiles.capacity())
              * static_cast<qsizetype>(sizeof(TileSnapshot));
+    bytes += static_cast<qsizetype>(action.houses.capacity())
+             * static_cast<qsizetype>(sizeof(UndoAction::HouseSnapshot));
     for (const TileSnapshot &snapshot : action.tiles) {
         bytes += snapshot.creature_name.capacity()
                  * static_cast<qsizetype>(sizeof(QChar));
@@ -2771,7 +2783,7 @@ void OtbmReader::endUndoGroup()
 {
     m_undoGrouping = false;
     m_groupRecorded.clear();
-    const bool pushed = !m_currentGroup.tiles.empty();
+    const bool pushed = !m_currentGroup.tiles.empty() || !m_currentGroup.houses.empty();
     if (pushed) {
         pushUndo(std::move(m_currentGroup));
     }
@@ -2893,6 +2905,10 @@ bool OtbmReader::undo()
     redoAction.tiles.reserve(action.tiles.size());
     for (const TileSnapshot &snap : action.tiles)
         redoAction.tiles.push_back(currentSnapshot(snap.x, snap.y, snap.z));
+    for (const auto &snap : action.houses) {
+        if (const OtbmHouse *h = houseById(static_cast<int>(snap.id)))
+            redoAction.houses.push_back({snap.id, h->entryX, h->entryY, h->entryZ});
+    }
     redoAction.bytes = estimateActionBytes(redoAction);
     m_redoBytes += redoAction.bytes;
     m_redoStack.push_back(std::move(redoAction));
@@ -2901,6 +2917,11 @@ bool OtbmReader::undo()
 
     m_lastAffected.clear();
     restoreSnapshots(action.tiles);
+    for (const auto &snap : action.houses)
+        if (OtbmHouse *h = houseById(static_cast<int>(snap.id))) {
+            h->entryX = snap.entryX; h->entryY = snap.entryY; h->entryZ = snap.entryZ;
+            m_housesModified = true;
+        }
     for (const TileSnapshot &snap : action.tiles)
         m_lastAffected.push_back({ snap.x, snap.y, snap.z });
     notifyMapChanged();
@@ -2920,6 +2941,10 @@ bool OtbmReader::redo()
     undoAction.tiles.reserve(action.tiles.size());
     for (const TileSnapshot &snap : action.tiles)
         undoAction.tiles.push_back(currentSnapshot(snap.x, snap.y, snap.z));
+    for (const auto &snap : action.houses) {
+        if (const OtbmHouse *h = houseById(static_cast<int>(snap.id)))
+            undoAction.houses.push_back({snap.id, h->entryX, h->entryY, h->entryZ});
+    }
     undoAction.bytes = estimateActionBytes(undoAction);
     m_undoBytes += undoAction.bytes;
     m_undoStack.push_back(std::move(undoAction));
@@ -2928,6 +2953,11 @@ bool OtbmReader::redo()
 
     m_lastAffected.clear();
     restoreSnapshots(action.tiles);
+    for (const auto &snap : action.houses)
+        if (OtbmHouse *h = houseById(static_cast<int>(snap.id))) {
+            h->entryX = snap.entryX; h->entryY = snap.entryY; h->entryZ = snap.entryZ;
+            m_housesModified = true;
+        }
     for (const TileSnapshot &snap : action.tiles)
         m_lastAffected.push_back({ snap.x, snap.y, snap.z });
     notifyMapChanged();
@@ -3339,6 +3369,21 @@ bool OtbmReader::saveNotesOnly(const QString &path)
     m_notesModified = false;
     setDirty(m_mapDirty);
     return true;
+}
+
+void OtbmReader::recordHouse(uint32_t id)
+{
+    auto it = std::find_if(m_houses.begin(), m_houses.end(),
+                           [id](const OtbmHouse &h) { return h.id == id; });
+    if (it == m_houses.end()) return;
+    UndoAction::HouseSnapshot snap{id, it->entryX, it->entryY, it->entryZ};
+    if (m_undoGrouping) {
+        m_currentGroup.houses.push_back(snap);
+    } else {
+        UndoAction a;
+        a.houses.push_back(snap);
+        pushUndo(std::move(a));
+    }
 }
 
 bool OtbmReader::saveFile(const QString &path)

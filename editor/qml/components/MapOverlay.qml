@@ -19,7 +19,7 @@ Item {
     readonly property real canvasMargin: 64
 
     clip: true
-    visible: settings.showClientBox || settings.showTooltips || settings.showWaypoints
+    visible: settings.showClientBox || settings.showTooltips || settings.showWaypoints || settings.showHouses
 
     function refreshData(force) {
         if (!mapCtrl)
@@ -35,12 +35,12 @@ Item {
                 + Math.ceil(width / currentTileSize) + ":"
                 + Math.ceil(height / currentTileSize) + ":"
                 + currentTileSize + ":" + settings.showTooltips + ":"
-                + settings.showWaypoints;
+                + settings.showWaypoints + ":" + settings.showHouses;
         if (!force && key === dataKey)
             return;
 
         dataKey = key;
-        entries = mapCtrl.mapOverlayData(settings.showTooltips,
+        entries = mapCtrl.mapOverlayData(settings.showTooltips || settings.showHouses,
                                          settings.showWaypoints);
         paintedOriginX = originX;
         paintedOriginY = originY;
@@ -70,6 +70,14 @@ Item {
         ctx.textBaseline = "middle";
         ctx.fillStyle = "#ffffff";
         ctx.fillText("W", centerX, centerY + 0.5);
+    }
+
+    function drawHouseExit(ctx, centerX, centerY) {
+        ctx.font = "bold " + Math.max(8, Math.round(Math.min(12, currentTileSize * 0.34))) + "px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ffe08a";
+        ctx.fillText("EXIT", centerX, centerY);
     }
 
     function drawTooltip(ctx, text, anchorX, anchorY, waypoint, note) {
@@ -137,7 +145,7 @@ Item {
            + (overlay.paintedOriginX - overlay.currentOriginX) * overlay.currentTileSize
         y: -overlay.canvasMargin
            + (overlay.paintedOriginY - overlay.currentOriginY) * overlay.currentTileSize
-        visible: overlay.settings.showTooltips || overlay.settings.showWaypoints
+        visible: overlay.settings.showTooltips || overlay.settings.showWaypoints || overlay.settings.showHouses
 
         onPaint: {
             const ctx = getContext("2d");
@@ -152,6 +160,8 @@ Item {
                 const centerY = (entry.y + 0.5 - overlay.paintedOriginY) * tileSize + margin;
                 if (entry.kind === "waypoint" && overlay.settings.showWaypoints)
                     overlay.drawWaypoint(ctx, centerX, centerY);
+                if (entry.kind === "house_exit")
+                    overlay.drawHouseExit(ctx, centerX, centerY);
                 if (overlay.settings.showTooltips && entry.kind !== "container"
                         && entry.text.length > 0)
                     overlay.drawTooltip(ctx, entry.text, centerX,

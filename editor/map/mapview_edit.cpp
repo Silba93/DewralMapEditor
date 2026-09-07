@@ -446,6 +446,26 @@ void MapView::placeItemOnFloor(int x, int y, int z, const OtbmMapItem &src)
         placed = m_otbm->placeItem(x, y, z, src, index, replace, cat == 0);
         mutationUs = placementTimer.nsecsElapsed() / 1000 - beforeMutation;
         if (placed) {
+            // Doors need a nonzero HouseDoorId for the server to register them.
+            // Assign the next ID when a new door is placed on a house tile.
+            const OtbmTile *editedTile = m_otbm->tileAt(x, y, z);
+            if (editedTile && editedTile->is_house && m_brushController.store()
+                && m_brushController.store()->isDoorItem(sid)) {
+                const int placedIndex = replace ? index : static_cast<int>(editedTile->items.size()) - 1;
+                if (placedIndex >= 0 && placedIndex < static_cast<int>(editedTile->items.size())) {
+                    const OtbmMapItem &door = editedTile->items[static_cast<size_t>(placedIndex)];
+                    if (!door.extra || door.extra->door_id == 0) {
+                        uint8_t nextId = 1;
+                        for (const OtbmTile &candidate : m_otbm->tiles()) {
+                            if (!candidate.is_house || candidate.house_id != editedTile->house_id) continue;
+                            for (const OtbmMapItem &item : candidate.items)
+                                nextId = std::max<uint8_t>(nextId,
+                                    static_cast<uint8_t>((item.extra ? item.extra->door_id : 0) + 1));
+                        }
+                        m_otbm->setItemDoorIdAt(x, y, z, placedIndex, nextId);
+                    }
+                }
+            }
             const qint64 beforeTileUpdate = placementTimer.nsecsElapsed() / 1000;
             onTileEdited(x, y, z);
             tileUpdateUs = placementTimer.nsecsElapsed() / 1000 - beforeTileUpdate;

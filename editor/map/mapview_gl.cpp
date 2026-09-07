@@ -361,6 +361,7 @@ void MapView::buildLightGrid(int floor, int tx, int ty, int tw, int th,
                     dst[x - tx] = src[x - baseX];
             }
         }
+
 }
 
 quint32 MapView::glUpdateLightGrid()
@@ -908,6 +909,21 @@ void MapView::glCollectZoneMarkInstances(std::vector<float> &outHouse,
                 }
             }
         }
+
+    // Mark saved house exits on the outside walkable tile.
+    if (m_showHouses) {
+        const QVariantList houses = m_otbm->housesList();
+        for (const QVariant &value : houses) {
+            const QVariantMap house = value.toMap();
+            const int houseId = house.value(QStringLiteral("id")).toInt();
+            if (house.value(QStringLiteral("entryZ")).toInt() != m_navigationController.floor()) continue;
+            const int ex = house.value(QStringLiteral("entryX")).toInt();
+            const int ey = house.value(QStringLiteral("entryY")).toInt();
+            if (ex <= 0 || ey <= 0 || ex < tx0 || ex > tx1 || ey < ty0 || ey > ty1) continue;
+            auto &target = houseId == m_brushController.houseBrush() ? outSelectedHouse : outHouse;
+            target.insert(target.end(), { ex * 32.0f, ey * 32.0f, 32.0f, 32.0f });
+        }
+    }
 }
 
 void MapView::glCollectBrushCursorInstances(std::vector<float> &out,
