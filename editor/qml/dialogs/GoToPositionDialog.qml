@@ -9,28 +9,11 @@ DmeDialog {
 
     title: "Go To Position"
 
-    function parsedPosition(text) {
-        if (!text)
-            return null;
-
-        // Supports plain coordinates, JSON/Lua tables and Position(x, y, z).
-        var matches = String(text).match(/-?\d+/g);
-        if (!matches || matches.length < 3)
-            return null;
-
-        var x = Number(matches[0]);
-        var y = Number(matches[1]);
-        var z = Number(matches[2]);
-        if (!isFinite(x) || !isFinite(y) || !isFinite(z)
-                || Math.floor(x) !== x || Math.floor(y) !== y || Math.floor(z) !== z
-                || x < 0 || x > 65535 || y < 0 || y > 65535 || z < 0 || z > 15)
-            return null;
-        return { x: x, y: y, z: z };
-    }
-
     function pastePosition() {
-        var position = parsedPosition(Backend.fileTools.clipboardText());
-        if (!position)
+        // Accepts every style written by the map context menu "Copy Position
+        // As" entries and by "Copy Position".
+        var position = Backend.fileTools.positionFromText(Backend.fileTools.clipboardText());
+        if (position.valid !== true)
             return false;
         xField2.value = position.x;
         yField2.value = position.y;

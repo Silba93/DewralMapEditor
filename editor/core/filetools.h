@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QUrl>
+#include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
 class FileTools : public QObject
@@ -24,6 +25,11 @@ public:
     Q_INVOKABLE QString toLocalFile(const QUrl &url) const { return url.toLocalFile(); }
     Q_INVOKABLE void setClipboard(const QString &text) const;
     Q_INVOKABLE QString clipboardText() const;
+
+    // Position strings shared by the map context menu entries: "Copy Position
+    // As" writes them and the paste actions read them back in every style.
+    Q_INVOKABLE QString positionText(const QString &format, int x, int y, int z) const;
+    Q_INVOKABLE QVariantMap positionFromText(const QString &text) const;
 };
 
 #endif

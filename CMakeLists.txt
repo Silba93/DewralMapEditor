@@ -82,6 +82,7 @@ add_executable(DewralMapEditor
     editor/core/paletteimageprovider.h
     editor/core/filetools.cpp
     editor/core/filetools.h
+    editor/core/positiontext.h
     editor/core/uitheme.cpp
     editor/core/uitheme.h
     editor/core/documentmanager.cpp
@@ -237,10 +238,16 @@ if(BUILD_TESTING)
         libs/otformats editor/core)
     target_link_libraries(creature_store_test PRIVATE Qt6::Core)
     add_test(NAME creature_store COMMAND creature_store_test)
+    add_executable(position_text_test EXCLUDE_FROM_ALL
+        tests/position_text_test.cpp)
+    target_include_directories(position_text_test PRIVATE editor/core)
+    target_link_libraries(position_text_test PRIVATE Qt6::Core)
+    add_test(NAME position_text COMMAND position_text_test)
     if(WIN32)
         set_tests_properties(otbm_compact_storage otbm_editing_storage
                              otbm_background_load atlas_background_build map_path_builder
-                             document_recovery otb_toml_loading creature_store PROPERTIES
+                             document_recovery otb_toml_loading creature_store
+                             position_text PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

@@ -1,5 +1,7 @@
 #include "filetools.h"
 
+#include "positiontext.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -84,4 +86,25 @@ QString FileTools::clipboardText() const
         return cb->text();
     }
     return QString();
+}
+
+QString FileTools::positionText(const QString &format, int x, int y, int z) const
+{
+    return PositionText::formatText(format, x, y, z);
+}
+
+QVariantMap FileTools::positionFromText(const QString &text) const
+{
+    QVariantMap result;
+    int x = 0;
+    int y = 0;
+    int z = 0;
+    const bool valid = PositionText::parseText(text, &x, &y, &z);
+    result.insert(QStringLiteral("valid"), valid);
+    if (valid) {
+        result.insert(QStringLiteral("x"), x);
+        result.insert(QStringLiteral("y"), y);
+        result.insert(QStringLiteral("z"), z);
+    }
+    return result;
 }

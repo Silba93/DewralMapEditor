@@ -19,25 +19,29 @@ Item {
     property alias context: mapArea.ctx
 
     function positionText(format) {
-        var x = mapArea.ctx.x;
-        var y = mapArea.ctx.y;
-        var z = mapArea.ctx.z;
-        switch (format) {
-        case "tuple":
-            return "(" + x + ", " + y + ", " + z + ")";
-        case "lua":
-            return "{x = " + x + ", y = " + y + ", z = " + z + "}";
-        case "position":
-            return "Position(" + x + ", " + y + ", " + z + ")";
-        case "json":
-            return "{\"x\":" + x + ",\"y\":" + y + ",\"z\":" + z + "}";
-        default:
-            return x + ", " + y + ", " + z;
-        }
+        return Backend.fileTools.positionText(format, mapArea.ctx.x,
+                                              mapArea.ctx.y, mapArea.ctx.z);
     }
 
     function copyPosition(format) {
         Backend.fileTools.setClipboard(positionText(format));
+    }
+
+    // Parses whatever "Copy Position As" produced (plain, tuple, OTClient,
+    // Lua table or JSON) from the clipboard.
+    function clipboardPosition() {
+        return Backend.fileTools.positionFromText(Backend.fileTools.clipboardText());
+    }
+
+    function pasteTeleportLocation() {
+        const position = workspace.clipboardPosition();
+        if (position.valid !== true)
+            return false;
+        const changed = mapView.setContextItemTeleport(position.x, position.y,
+                                                       position.z);
+        if (changed)
+            mapArea.ctx = mapView.contextInfo();
+        return changed;
     }
 
     DmePanel {
@@ -358,6 +362,13 @@ Item {
                     mapView.clearSelection();
                     workspace.paletteNavigator.selectHouse(mapArea.ctx.houseId);
                 }
+            }
+            DmeMenuItem {
+                text: "Paste Teleport Location"
+                visible: mapArea.ctx.teleport === true
+                height: visible ? implicitHeight : 0
+                enabled: workspace.clipboardPosition().valid === true
+                onTriggered: workspace.pasteTeleportLocation()
             }
             DmeMenuItem {
                 text: "Go To Destination"
