@@ -33,6 +33,14 @@ Item {
         return Backend.fileTools.positionFromText(Backend.fileTools.clipboardText());
     }
 
+    // The system clipboard is not a QML-observable property, so bindings that
+    // call the functions above are evaluated only once (while the clipboard is
+    // still empty) and stay stale. Every context menu therefore re-reads the
+    // clipboard through MapWorkspace.refreshContextClipboard() as it opens.
+    function refreshContextClipboard() {
+        mapArea.clipboardDestination = workspace.clipboardPosition();
+    }
+
     function pasteTeleportLocation() {
         const position = workspace.clipboardPosition();
         if (position.valid !== true)
@@ -117,6 +125,17 @@ Item {
         visible: Backend.otbmReader.loaded
         clip: true
 
+        // Position parsed from the clipboard the last time the context menu was
+        // opened. Refreshed on every right click so "Paste Teleport Location"
+        // reflects whatever was copied with "Copy Position" right before.
+        property var clipboardDestination: ({
+                valid: false,
+                x: 0,
+                y: 0,
+                z: 0
+            })
+        readonly property bool clipboardHasPosition: clipboardDestination.valid === true
+
         property var ctx: ({
                 hasItem: false,
                 serverId: 0,
@@ -177,6 +196,7 @@ Item {
             }
             onContextMenuRequested: (x, y) => {
                 mapArea.ctx = mapView.contextInfo();
+                workspace.refreshContextClipboard();
                 contextMenu.popup(x, y);
             }
             onItemDoubleClicked: {
@@ -364,10 +384,15 @@ Item {
                 }
             }
             DmeMenuItem {
-                text: "Paste Teleport Location"
+                text: mapArea.clipboardHasPosition
+                      ? "Paste Teleport Location ("
+                        + mapArea.clipboardDestination.x + ", "
+                        + mapArea.clipboardDestination.y + ", "
+                        + mapArea.clipboardDestination.z + ")"
+                      : "Paste Teleport Location"
                 visible: mapArea.ctx.teleport === true
                 height: visible ? implicitHeight : 0
-                enabled: workspace.clipboardPosition().valid === true
+                enabled: mapArea.clipboardHasPosition
                 onTriggered: workspace.pasteTeleportLocation()
             }
             DmeMenuItem {
