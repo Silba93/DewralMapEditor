@@ -12,6 +12,7 @@ Settings {
     property bool shiftPanToggle: true
     property bool showAnimations: false
     property bool torchOn: false
+    property bool showLightSources: false
     property int lightAmbient: 40
     property bool minimapOn: false
     property bool showShade: true

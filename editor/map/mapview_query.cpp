@@ -542,10 +542,11 @@ void MapView::cancelMapQuery()
 }
 
 QVariantList MapView::mapOverlayData(bool includeTooltips,
-                                     bool includeWaypoints) const
+                                     bool includeWaypoints,
+                                     bool includeLightSources) const
 {
     QVariantList output;
-    if (!m_otbm || (!includeTooltips && !includeWaypoints)) return output;
+    if (!m_otbm || (!includeTooltips && !includeWaypoints && !includeLightSources)) return output;
 
     const int tileSize = std::max(1, m_navigationController.tileSize());
     const int minX = static_cast<int>(std::floor(m_navigationController.originX())) - 1;
@@ -613,6 +614,49 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
             entry.insert(QStringLiteral("text"), QStringLiteral("EXIT"));
             output.append(entry);
             if (output.size() >= kOverlayLimit) return output;
+        }
+    }
+
+    if (includeLightSources && m_otb && m_dat) {
+        const int minChunkX = floorDiv(minX, kChunkTiles);
+        const int minChunkY = floorDiv(minY, kChunkTiles);
+        const int maxChunkX = floorDiv(maxX, kChunkTiles);
+        const int maxChunkY = floorDiv(maxY, kChunkTiles);
+        const auto &tileIndex = m_chunkStore.tiles();
+        const auto floorIt = tileIndex.constFind(m_navigationController.floor());
+        if (floorIt != tileIndex.cend()) {
+            for (int chunkY = minChunkY; chunkY <= maxChunkY; ++chunkY) {
+                for (int chunkX = minChunkX; chunkX <= maxChunkX; ++chunkX) {
+                    const auto chunkIt = floorIt->constFind(chunkKey(chunkX, chunkY));
+                    if (chunkIt == floorIt->cend()) continue;
+                    for (const OtbmTile *tile : chunkIt.value()) {
+                        if (!tile || tile->x < minX || tile->x > maxX
+                            || tile->y < minY || tile->y > maxY) continue;
+                        for (const OtbmMapItem &item : tile->items) {
+                            const int clientId = m_otb->clientIdForServerId(item.server_id);
+                            if (clientId <= 0) continue;
+                            const ClientItem *client =
+                                m_dat->itemByClientId(static_cast<uint16_t>(clientId));
+                            if (!client || !client->has_light || client->light_level == 0)
+                                continue;
+                            const int lightColor = client->light_color;
+                            QVariantMap entry;
+                            entry.insert(QStringLiteral("kind"), QStringLiteral("light_source"));
+                            entry.insert(QStringLiteral("x"), tile->x);
+                            entry.insert(QStringLiteral("y"), tile->y);
+                            entry.insert(QStringLiteral("name"), QString());
+                            entry.insert(QStringLiteral("text"), QString());
+                            entry.insert(QStringLiteral("intensity"),
+                                         static_cast<int>(client->light_level));
+                            entry.insert(QStringLiteral("red"), ((lightColor / 36) % 6) * 51);
+                            entry.insert(QStringLiteral("green"), ((lightColor / 6) % 6) * 51);
+                            entry.insert(QStringLiteral("blue"), (lightColor % 6) * 51);
+                            output.append(entry);
+                            if (output.size() >= kOverlayLimit) return output;
+                        }
+                    }
+                }
+            }
         }
     }
 

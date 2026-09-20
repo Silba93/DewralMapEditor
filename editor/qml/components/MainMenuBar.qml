@@ -462,6 +462,13 @@ DmeMenuBar {
             checked: menuBar.settings.torchOn
             onTriggered: menuBar.settings.torchOn = !menuBar.settings.torchOn
         }
+        Action {
+            text: "Show light sources"
+            checkable: true
+            checked: menuBar.settings.showLightSources
+            onTriggered: menuBar.settings.showLightSources =
+                         !menuBar.settings.showLightSources
+        }
         DmeMenu {
             id: lightStrengthMenu
             title: "Light ambient"
