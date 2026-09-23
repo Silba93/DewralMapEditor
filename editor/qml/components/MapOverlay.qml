@@ -17,10 +17,14 @@ Item {
     property real paintedOriginY: 0
     readonly property real currentTileSize: mapCtrl ? Math.max(1, mapCtrl.tileSize) : 1
     readonly property real canvasMargin: 64
+    // Light markers are useful when surveying a wider area, but become noisy
+    // and expensive at normal or closer zoom levels.
+    readonly property bool lightSourcesVisible: settings.showLightSources
+                                                && currentTileSize < 32 * 0.9
 
     clip: true
     visible: settings.showClientBox || settings.showTooltips || settings.showWaypoints
-             || settings.showHouses || settings.showLightSources
+             || settings.showHouses || lightSourcesVisible
 
     function refreshData(force) {
         if (!mapCtrl)
@@ -37,14 +41,14 @@ Item {
                 + Math.ceil(height / currentTileSize) + ":"
                 + currentTileSize + ":" + settings.showTooltips + ":"
                 + settings.showWaypoints + ":" + settings.showHouses + ":"
-                + settings.showLightSources;
+                + lightSourcesVisible;
         if (!force && key === dataKey)
             return;
 
         dataKey = key;
         entries = mapCtrl.mapOverlayData(settings.showTooltips || settings.showHouses,
                                          settings.showWaypoints,
-                                         settings.showLightSources);
+                                         lightSourcesVisible);
         paintedOriginX = originX;
         paintedOriginY = originY;
         worldCanvas.requestPaint();
@@ -181,7 +185,7 @@ Item {
         y: -overlay.canvasMargin
            + (overlay.paintedOriginY - overlay.currentOriginY) * overlay.currentTileSize
         visible: overlay.settings.showTooltips || overlay.settings.showWaypoints
-                 || overlay.settings.showHouses || overlay.settings.showLightSources
+                 || overlay.settings.showHouses || overlay.lightSourcesVisible
 
         onPaint: {
             const ctx = getContext("2d");
@@ -198,7 +202,7 @@ Item {
                     overlay.drawWaypoint(ctx, centerX, centerY);
                 if (entry.kind === "house_exit")
                     overlay.drawHouseExit(ctx, centerX, centerY);
-                if (entry.kind === "light_source" && overlay.settings.showLightSources)
+                if (entry.kind === "light_source" && overlay.lightSourcesVisible)
                     overlay.drawLightSource(ctx, entry.x - overlay.paintedOriginX,
                                             entry.y - overlay.paintedOriginY,
                                             entry.intensity, entry.red, entry.green,

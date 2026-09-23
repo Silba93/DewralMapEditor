@@ -575,7 +575,7 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
             entry.insert(QStringLiteral("name"), QString());
             entry.insert(QStringLiteral("text"), note.value(QStringLiteral("text")));
             output.append(entry);
-            if (output.size() >= kOverlayLimit) return output;
+            if (output.size() >= kOverlayLimit && !includeLightSources) return output;
         }
     }
 
@@ -595,7 +595,7 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
                          ? QStringLiteral("wp: %1").arg(waypoint.name)
                          : QString());
         output.append(entry);
-        if (output.size() >= kOverlayLimit) return output;
+        if (output.size() >= kOverlayLimit && !includeLightSources) return output;
     }
 
     if (includeTooltips) {
@@ -613,10 +613,14 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
             entry.insert(QStringLiteral("name"), house.value(QStringLiteral("name")));
             entry.insert(QStringLiteral("text"), QStringLiteral("EXIT"));
             output.append(entry);
-            if (output.size() >= kOverlayLimit) return output;
+            if (output.size() >= kOverlayLimit && !includeLightSources) return output;
         }
     }
 
+    // Light sources are a viewport overlay, not metadata tooltips. They must
+    // not be truncated by the metadata limit, otherwise the chunk traversal
+    // makes the overlay appear biased toward the top-left of a zoomed-out map.
+    const int outputBeforeLightSources = output.size();
     if (includeLightSources && m_otb && m_dat) {
         const int minChunkX = floorDiv(minX, kChunkTiles);
         const int minChunkY = floorDiv(minY, kChunkTiles);
@@ -652,13 +656,13 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
                             entry.insert(QStringLiteral("green"), ((lightColor / 6) % 6) * 51);
                             entry.insert(QStringLiteral("blue"), (lightColor % 6) * 51);
                             output.append(entry);
-                            if (output.size() >= kOverlayLimit) return output;
                         }
                     }
                 }
             }
         }
     }
+    const int lightSourceCount = output.size() - outputBeforeLightSources;
 
     if (!includeTooltips || tileSize < 12) return output;
 
@@ -715,7 +719,7 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
                         containerEntry.insert(QStringLiteral("itemCount"),
                                               static_cast<int>(children->size()));
                         output.append(containerEntry);
-                        if (output.size() >= kOverlayLimit) return output;
+                        if (output.size() - lightSourceCount >= kOverlayLimit) return output;
                         continue;
                     }
                     const bool special =
@@ -763,7 +767,7 @@ QVariantList MapView::mapOverlayData(bool includeTooltips,
                 entry.insert(QStringLiteral("text"),
                              itemTooltips.join(QStringLiteral("\n\n")));
                 output.append(entry);
-                if (output.size() >= kOverlayLimit) return output;
+                if (output.size() - lightSourceCount >= kOverlayLimit) return output;
             }
         }
     }
