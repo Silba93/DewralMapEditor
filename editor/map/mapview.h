@@ -60,6 +60,7 @@ class MapView : public QQuickItem
     Q_PROPERTY(bool placeEffect READ placeEffect WRITE setPlaceEffect NOTIFY placeEffectChanged)
 
     Q_PROPERTY(int brushSize READ brushSize WRITE setBrushSize NOTIFY brushParamsChanged)
+    Q_PROPERTY(int doodadDensity READ doodadDensity WRITE setDoodadDensity NOTIFY brushParamsChanged)
 
     Q_PROPERTY(QString brushShape READ brushShape WRITE setBrushShape NOTIFY brushParamsChanged)
     Q_PROPERTY(int selectionCount READ selectionCount NOTIFY selectionChanged)
@@ -327,6 +328,14 @@ public:
     int brushSize() const { return m_brushController.size(); }
     void setBrushSize(int size) {
         if (m_brushController.setSize(size)) {
+            emit brushParamsChanged();
+            emit contentUpdated();
+            update();
+        }
+    }
+    int doodadDensity() const { return m_brushController.doodadDensity(); }
+    void setDoodadDensity(int density) {
+        if (m_brushController.setDoodadDensity(density)) {
             emit brushParamsChanged();
             emit contentUpdated();
             update();

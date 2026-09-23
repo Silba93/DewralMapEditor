@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QSet>
+#include <QRandomGenerator>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -65,6 +66,13 @@ void MapView::paintDoodadBrushAt(int cx, int cy)
         for (int dx = -m_brushController.size(); dx <= m_brushController.size(); ++dx)
             if (brushCovers(dx, dy)) footprint.push_back({ cx + dx, cy + dy });
     if (footprint.empty()) return;
+
+    const int populatedCount = std::max(1, (static_cast<int>(footprint.size()) * m_brushController.doodadDensity() + 5) / 10);
+    for (int i = 0; i < populatedCount; ++i) {
+        const int selected = i + QRandomGenerator::global()->bounded(static_cast<int>(footprint.size()) - i);
+        std::swap(footprint[i], footprint[selected]);
+    }
+    footprint.resize(populatedCount);
 
     beginEditBatch();
     const bool savedFx = m_placeEffect;
