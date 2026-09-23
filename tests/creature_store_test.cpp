@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QStandardPaths>
 #include <QUuid>
 
 #include <cstdlib>
@@ -37,8 +38,9 @@ int main(int argc, char **argv)
 
     const QString profile = QStringLiteral("creature-store-test-%1")
                                 .arg(QUuid::createUuid().toString(QUuid::Id128));
-    const QString profileDirectory = QDir(QCoreApplication::applicationDirPath())
-                                         .filePath(QStringLiteral("data/%1").arg(profile));
+    const QString profileDirectory = QDir(
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+        .filePath(QStringLiteral("creatures/%1").arg(profile));
     CreatureStore store;
     store.loadForDir(profile);
     const QVariantMap result = store.importOtFile(indexPath);
@@ -49,6 +51,10 @@ int main(int argc, char **argv)
         && npc && npc->lookType == 128 && store.rowForCreature(
             QStringLiteral("Alice"), true) == 0;
 
+    CreatureStore reloaded;
+    const bool persisted = reloaded.loadForDir(profile)
+        && reloaded.byNameAndType(QStringLiteral("Alice"), true) != nullptr;
+
     QDir(profileDirectory).removeRecursively();
-    return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    return passed && persisted ? EXIT_SUCCESS : EXIT_FAILURE;
 }

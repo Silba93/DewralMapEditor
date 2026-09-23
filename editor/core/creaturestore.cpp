@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QStandardPaths>
 #include <QUrl>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
@@ -42,9 +43,17 @@ bool CreatureStore::loadForDir(const QString &dirName)
 {
     beginResetModel();
     m_creatures.clear();
-    m_path = QDir(dmeDataDir())
-                 .filePath(QStringLiteral("%1/creatures.xml").arg(dirName));
-    const bool ok = QFile::exists(m_path) && loadFile(m_path);
+    const QString bundledPath = QDir(dmeDataDir())
+                                    .filePath(QStringLiteral("%1/creatures.xml")
+                                                 .arg(dirName));
+    const QString userDataDir = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation);
+    m_path = userDataDir.isEmpty()
+        ? bundledPath
+        : QDir(userDataDir).filePath(
+              QStringLiteral("creatures/%1/creatures.xml").arg(dirName));
+    const QString loadPath = QFile::exists(m_path) ? m_path : bundledPath;
+    const bool ok = QFile::exists(loadPath) && loadFile(loadPath);
     std::sort(m_creatures.begin(), m_creatures.end(),
               [](const CreatureType &a, const CreatureType &b) {
                   return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
